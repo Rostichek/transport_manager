@@ -114,6 +114,10 @@ public:
         return nullptr;
     }
 
+    const unordered_map<string, unique_ptr<Bus>>& GetBuses() const {
+        return buses_;
+    }
+
     const Stop* GetStop(const string& stop_name) const {
         if (stops_.count(stop_name))
             return stops_.at(stop_name).get();
@@ -165,6 +169,10 @@ public:
             return length;
     }
 
+    bool Find(const string& stop_name) const {
+        return (find(stops_.begin(), stops_.end(), stop_name) != stops_.end());
+    }
+
 private:
     string name_;
     vector<string> stops_;
@@ -179,6 +187,7 @@ struct Request {
         ADD_STOP,
         ADD_BUS,
         BUS_INFO,
+        STOP_INFO
     };
 
     Request(Type type) : type(type) {}
@@ -196,6 +205,7 @@ const unordered_map<string_view, Request::Type> STR_TO_INPUT_REQUEST_TYPE = {
 
 const unordered_map<string_view, Request::Type> STR_TO_OUTPUT_REQUEST_TYPE = {
     {"Bus", Request::Type::BUS_INFO},
+    {"Stop", Request::Type::STOP_INFO},
 };
 
 template <typename ResultType>
@@ -270,6 +280,33 @@ private:
     string name;
 };
 
+struct StopInfoRequest : ReadRequest<string> {
+    StopInfoRequest() : ReadRequest<string>(Type::STOP_INFO) {}
+    void ParseFrom(string_view input) override {
+        name = ReadToken(input, ":");
+    }
+
+    string Process(const TransportManager& manager) const override {
+        const auto& stop = manager.GetStop(name);
+        if (stop == nullptr) return "Stop " + name + ": not found";
+        const auto& buses_from_manager = manager.GetBuses();
+        set<string_view> buses_for_stop;
+        for (const auto& bus : buses_from_manager)
+            if (bus.second->Find(name))
+                buses_for_stop.insert(bus.first);
+        if (buses_for_stop.size() == 0) return "Stop " + name + ": no buses";
+        stringstream output;
+        output << "Stop " << name << ": buses ";
+        for (const auto& bus : buses_for_stop) {
+            output << " " << bus;
+        }
+        return  output.str();
+    }
+
+private:
+    string name;
+};
+
 RequestHolder Request::Create(Request::Type type) {
     switch (type) {
     case Request::Type::ADD_STOP:
@@ -278,6 +315,8 @@ RequestHolder Request::Create(Request::Type type) {
         return make_unique<AddBusRequest>();
     case Request::Type::BUS_INFO:
         return make_unique<BusInfoRequest>();
+    case Request::Type::STOP_INFO:
+        return make_unique<StopInfoRequest>();
     default:
         return nullptr;
     }
@@ -357,6 +396,10 @@ vector<string> ProcessRequests(const vector<RequestHolder> & requests, Transport
             const auto& request = static_cast<const BusInfoRequest&>(*request_holder);
             responses.push_back(request.Process(manager));
         }
+        else if (request_holder->type == Request::Type::STOP_INFO) {
+            const auto& request = static_cast<const StopInfoRequest&>(*request_holder);
+            responses.push_back(request.Process(manager));
+        }
     }
     return responses;
 }
@@ -366,7 +409,6 @@ void PrintResponses(const vector<string> & responses, ostream & stream = cout) {
         stream << response << endl;
     }
 }
-
 
 int main() {
     TransportManager manager;
