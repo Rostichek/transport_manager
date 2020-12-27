@@ -1,46 +1,6 @@
-#define _USE_MATH_DEFINES
-#include <cmath>
-#include <cstdint>
-#include <ctime>
-#include <iomanip>
-#include <exception>
-#include <iostream>
-#include <iterator>
-#include <memory>
-#include <optional>
-#include <set>
-#include <sstream>
-#include <functional>
-#include <string>
-#include <system_error>
-#include <type_traits>
-#include <iomanip>
-#include <unordered_map>
-#include <vector>
-#include <algorithm>
+#include "Manager.h"
 
 using namespace std;
-
-class TransportManager;
-class Stop;
-class Bus;
-
-struct Coordinate {
-    double 
-        latitude = 0.0,
-        longitude = 0.0;
-};
-
-double ConvertDegToRad(double degree) {
-    return (degree * M_PI) / 180.0;
-}
-
-double ComputeDistance(const Coordinate& lhs, const Coordinate& rhs) {
-    return acos(sin(ConvertDegToRad(lhs.latitude)) * sin(ConvertDegToRad(rhs.latitude)) +
-        cos(ConvertDegToRad(lhs.latitude)) * cos(ConvertDegToRad(rhs.latitude)) *
-        cos(fabs(ConvertDegToRad(lhs.longitude) - ConvertDegToRad(rhs.longitude)))
-    ) * 6371000;
-}
 
 pair<string_view, optional<string_view>> SplitTwoStrict(string_view s, string_view delimiter = " ") {
     const size_t pos = s.find(delimiter);
@@ -96,89 +56,6 @@ void ValidateBounds(Number number_to_check, Number min_value, Number max_value) 
     }
 }
 
-class TransportManager {
-public:
-    TransportManager() = default;
-
-    void AddStop(string stop_name, Coordinate coordinate) {
-        stops_[stop_name] = make_unique<Stop>(stop_name, coordinate);
-    }
-
-    void AddBus(string bus_name, vector<string> stops, bool is_reversed) {
-        buses_[bus_name] = make_unique<Bus>(bus_name, move(stops), is_reversed);
-    }
-
-    const Bus* GetBus(const string& bus_name) const {
-        if (buses_.count(bus_name))
-            return buses_.at(bus_name).get();
-        return nullptr;
-    }
-
-    const unordered_map<string, unique_ptr<Bus>>& GetBuses() const {
-        return buses_;
-    }
-
-    const Stop* GetStop(const string& stop_name) const {
-        if (stops_.count(stop_name))
-            return stops_.at(stop_name).get();
-        return nullptr;
-    }
-
-private:
-    unordered_map<string, unique_ptr<Stop>> stops_;
-    unordered_map<string, unique_ptr<Bus>> buses_;
-};
-
-class Stop : public TransportManager {
-public:
-    Stop(const string& name, Coordinate coordinate) : name_(name), coordinate_(coordinate) {}
-
-    string_view GetName() {
-        return string_view(name_);
-    }
-
-    const Coordinate& GetCoordinate() const {
-        return coordinate_;
-    }
-
-private:
-    string name_;
-    Coordinate coordinate_;
-};
-
-class Bus : public TransportManager {
-public:
-    Bus(const string& name, vector<string> stops, bool is_reversed) : name_(name), stops_(stops), is_reversed_(is_reversed) {}
-
-    size_t GetStopsNum() const {
-        if (is_reversed_) return stops_.size() * 2 - 1;
-        return stops_.size();
-    }
-
-    size_t GetUniqueStopsNum() const {
-        set<string> unique_stops(stops_.begin(), stops_.end());
-        return unique_stops.size();
-    }
-
-    double GetLength(const TransportManager& manager) const {
-        double length = 0.0;
-        for (size_t i = 0; i < stops_.size() - 1; ++i) {
-            length += ComputeDistance(manager.GetStop(stops_[i])->GetCoordinate(), manager.GetStop(stops_[i + 1])->GetCoordinate());
-        }
-            if (is_reversed_) length *= 2;
-            return length;
-    }
-
-    bool Find(const string& stop_name) const {
-        return (find(stops_.begin(), stops_.end(), stop_name) != stops_.end());
-    }
-
-private:
-    string name_;
-    vector<string> stops_;
-    bool is_reversed_;
-};
-
 struct Request;
 using RequestHolder = unique_ptr<Request>;
 
@@ -224,15 +101,22 @@ struct AddStopRequest : ModifyRequest {
     void ParseFrom(string_view input) override {
         name = ReadToken(input, ":");
         coordinate.latitude = ConvertToDouble(ReadToken(input, ","));
-        coordinate.longitude = ConvertToDouble(input);
+        coordinate.longitude = ConvertToDouble(ReadToken(input, ","));
+        while (!input.empty()) {
+            int distance = ConvertToInt(ReadToken(input, "m to "));
+            distances[string(ReadToken(input, ","))] = distance;
+        }
     }
     
     void Process(TransportManager& manager) const override {
         manager.AddStop(name, coordinate);
+        for(const auto& distance_to_stop : distances)
+            manager.AddDistance(name, distance_to_stop.first, distance_to_stop.second);
     }
 private:
     string name;
     Coordinate coordinate;
+    unordered_map<string, int> distances;
 };
 
 struct AddBusRequest : ModifyRequest {
@@ -271,8 +155,10 @@ struct BusInfoRequest : ReadRequest<string> {
         const auto& bus = manager.GetBus(name);
         if (bus == nullptr) return "Bus " + name + ": not found";
         stringstream output; 
+        int real_route_length = bus->GetLength(manager);
         output << "Bus " << name << ": " << bus->GetStopsNum() << " stops on route, " <<
-            bus->GetUniqueStopsNum() << " unique stops, " << fixed << setprecision(6) << bus->GetLength(manager) << " route length";
+            bus->GetUniqueStopsNum() << " unique stops, " << real_route_length << " route length, " <<
+            fixed << setprecision(6) << static_cast<double>(real_route_length)/bus->GetGeographicDistance(manager) << " curvature";
         return  output.str();
     }
 
@@ -296,7 +182,7 @@ struct StopInfoRequest : ReadRequest<string> {
                 buses_for_stop.insert(bus.first);
         if (buses_for_stop.size() == 0) return "Stop " + name + ": no buses";
         stringstream output;
-        output << "Stop " << name << ": buses ";
+        output << "Stop " << name << ": buses";
         for (const auto& bus : buses_for_stop) {
             output << " " << bus;
         }
