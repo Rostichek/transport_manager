@@ -42,7 +42,7 @@ const Stop* TransportManager::GetStop(const string& stop_name) const {
 }
 
 int Bus::GetLength(const TransportManager& manager) const {
-    double length = 0.0;
+    int length = 0;
     for (size_t i = 0; i < stops_.size() - 1; ++i) {
         int distance_between_stops = 0;
         try {

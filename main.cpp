@@ -1,4 +1,7 @@
 #include "Manager.h"
+#include <iostream>
+#include <fstream>
+#include "Json.h"
 
 using namespace std;
 
@@ -70,6 +73,7 @@ struct Request {
     Request(Type type) : type(type) {}
     static RequestHolder Create(Type type);
     virtual void ParseFrom(string_view input) = 0;
+    virtual void ParseFrom(Json::Node input) = 0;
     virtual ~Request() = default;
 
     const Type type;
@@ -84,6 +88,30 @@ const unordered_map<string_view, Request::Type> STR_TO_OUTPUT_REQUEST_TYPE = {
     {"Bus", Request::Type::BUS_INFO},
     {"Stop", Request::Type::STOP_INFO},
 };
+
+struct Response {
+    Response(const Request::Type type_) : type(type_) {}
+    const Request::Type type;
+    uint64_t respones_id;
+    string error_message;
+};
+
+struct StopResponse : public Response {
+    StopResponse() : Response(Request::Type::STOP_INFO) {}
+    string name;
+    set<string_view> buses_for_stop;
+};
+
+struct BusResponse : public Response {
+    BusResponse() : Response(Request::Type::BUS_INFO) {}
+    string name;
+    size_t stops_num;
+    size_t unique_stops_num;
+    int real_route_length;
+    double curvature;
+};
+
+using ResponseHolder = unique_ptr<Response>;
 
 template <typename ResultType>
 struct ReadRequest : Request {
@@ -108,6 +136,16 @@ struct AddStopRequest : ModifyRequest {
         }
     }
     
+    void ParseFrom(Json::Node input) override {
+        name = input.AsMap().at("name").AsString();
+        coordinate = {
+            input.AsMap().at("latitude").AsNumber(),
+            input.AsMap().at("longitude").AsNumber()
+        };
+        for (const auto& stop : input.AsMap().at("road_distances").AsMap())
+            distances[stop.first] = stop.second.AsNumber();
+    }
+
     void Process(TransportManager& manager) const override {
         manager.AddStop(name, coordinate);
         for(const auto& distance_to_stop : distances)
@@ -136,6 +174,13 @@ struct AddBusRequest : ModifyRequest {
         }
     }
 
+    void ParseFrom(Json::Node input) override {
+        name = input.AsMap().at("name").AsString();
+        is_reversed = !input.AsMap().at("is_roundtrip").AsBool();
+        for (const auto& stop : input.AsMap().at("stops").AsArray())
+            stops.push_back(stop.AsString());
+    }
+
     void Process(TransportManager& manager) const override {
         manager.AddBus(name, stops, is_reversed);
     }
@@ -145,52 +190,70 @@ private:
     bool is_reversed = false;
 };
 
-struct BusInfoRequest : ReadRequest<string> {
-    BusInfoRequest() : ReadRequest<string>(Type::BUS_INFO) {}
+struct BusInfoRequest : ReadRequest<unique_ptr<BusResponse>> {
+    BusInfoRequest() : ReadRequest<unique_ptr<BusResponse>>(Type::BUS_INFO) {}
     void ParseFrom(string_view input) override {
         name = ReadToken(input, ":");
     }
 
-    string Process(const TransportManager& manager) const override {
+    void ParseFrom(Json::Node input) override {
+        name = input.AsMap().at("name").AsString();
+        request_id = input.AsMap().at("id").AsNumber();
+    }
+
+    unique_ptr<BusResponse> Process(const TransportManager& manager) const override {
+        unique_ptr<BusResponse> response = make_unique<BusResponse>();
+        response->name = name;
+        response->respones_id = request_id;
         const auto& bus = manager.GetBus(name);
-        if (bus == nullptr) return "Bus " + name + ": not found";
-        stringstream output; 
-        int real_route_length = bus->GetLength(manager);
-        output << "Bus " << name << ": " << bus->GetStopsNum() << " stops on route, " <<
-            bus->GetUniqueStopsNum() << " unique stops, " << real_route_length << " route length, " <<
-            fixed << setprecision(6) << static_cast<double>(real_route_length)/bus->GetGeographicDistance(manager) << " curvature";
-        return  output.str();
+        if (bus == nullptr) {
+            response->error_message = "not found";
+            return move(response);
+        }
+        response->real_route_length = bus->GetLength(manager);
+        response->curvature = response->real_route_length / bus->GetGeographicDistance(manager);
+        response->stops_num = bus->GetStopsNum();
+        response->unique_stops_num = bus->GetUniqueStopsNum();
+        return move(response);
     }
 
 private:
     string name;
+    uint64_t request_id;
 };
 
-struct StopInfoRequest : ReadRequest<string> {
-    StopInfoRequest() : ReadRequest<string>(Type::STOP_INFO) {}
+struct StopInfoRequest : ReadRequest<unique_ptr<StopResponse>> {
+    StopInfoRequest() : ReadRequest<unique_ptr<StopResponse>>(Type::STOP_INFO) {}
     void ParseFrom(string_view input) override {
         name = ReadToken(input, ":");
     }
 
-    string Process(const TransportManager& manager) const override {
+    void ParseFrom(Json::Node input) override {
+        name = input.AsMap().at("name").AsString();
+        request_id = input.AsMap().at("id").AsNumber();
+    }
+
+    unique_ptr<StopResponse> Process(const TransportManager& manager) const override {
+        unique_ptr<StopResponse> response = make_unique<StopResponse>();
         const auto& stop = manager.GetStop(name);
-        if (stop == nullptr) return "Stop " + name + ": not found";
+        response->name = name;
+        response->respones_id = request_id;
+        if (stop == nullptr) {
+            response->error_message = "not found";
+            return move(response);
+        }
         const auto& buses_from_manager = manager.GetBuses();
         set<string_view> buses_for_stop;
         for (const auto& bus : buses_from_manager)
             if (bus.second->Find(name))
                 buses_for_stop.insert(bus.first);
-        if (buses_for_stop.size() == 0) return "Stop " + name + ": no buses";
-        stringstream output;
-        output << "Stop " << name << ": buses";
-        for (const auto& bus : buses_for_stop) {
-            output << " " << bus;
-        }
-        return  output.str();
+        response->buses_for_stop = buses_for_stop;
+        return move(response);
     }
 
 private:
     string name;
+    uint64_t request_id;
 };
 
 RequestHolder Request::Create(Request::Type type) {
@@ -267,8 +330,49 @@ vector<RequestHolder> ReadRequests(const function<RequestHolder(string_view)>& P
     return requests;
 }
 
-vector<string> ProcessRequests(const vector<RequestHolder> & requests, TransportManager& manager) {
-    vector<string> responses;
+namespace Json {
+    RequestHolder ParseInputRequest(Json::Node request_node) {
+        const auto request_type = ConvertRequestTypeFromString(request_node.AsMap().at("type").AsString(), STR_TO_INPUT_REQUEST_TYPE);
+        if (!request_type) {
+            return nullptr;
+        }
+        RequestHolder request = Request::Create(*request_type);
+        if (request) {
+            request->ParseFrom(request_node);
+        };
+        return request;
+    }
+
+    RequestHolder ParseOutputRequest(Json::Node request_node) {
+        const auto request_type = ConvertRequestTypeFromString(request_node.AsMap().at("type").AsString(), STR_TO_OUTPUT_REQUEST_TYPE);
+        if (!request_type) {
+            return nullptr;
+        }
+        RequestHolder request = Request::Create(*request_type);
+        if (request) {
+            request->ParseFrom(request_node);
+        };
+        return request;
+    }
+}
+
+vector<RequestHolder> ReadRequests(const function<RequestHolder(Json::Node)>& ParseRequest, Json::Node in) {
+    const size_t request_count = in.AsArray().size();
+
+    vector<RequestHolder> requests;
+    requests.reserve(request_count);
+
+    for (size_t i = 0; i < request_count; ++i) {
+
+        if (auto request = ParseRequest(in.AsArray()[i])) {
+            requests.push_back(move(request));
+        }
+    }
+    return requests;
+}
+
+vector<ResponseHolder> ProcessRequests(const vector<RequestHolder> & requests, TransportManager& manager) {
+    vector<ResponseHolder> responses;
     for (const auto& request_holder : requests) {
         if (request_holder->type == Request::Type::ADD_STOP) {
             const auto& request = static_cast<const AddStopRequest&>(*request_holder);
@@ -290,15 +394,59 @@ vector<string> ProcessRequests(const vector<RequestHolder> & requests, Transport
     return responses;
 }
 
-void PrintResponses(const vector<string> & responses, ostream & stream = cout) {
-    for (const string& response : responses) {
-        stream << response << endl;
+void PrintResponses(const vector<ResponseHolder> & responses, ostream & stream = cout) {
+    stream << "[" << endl;
+    int j = 0;
+    for (const auto& response_holder : responses) {
+        stream << "\t{" << endl;
+        stream << "\t\t\"request_id\": " << response_holder->respones_id << "," << endl;
+        if (!response_holder->error_message.empty()) {
+            stream << "\t\t\"error_message\": \"" << response_holder->error_message << "\"" << endl;
+        } else if (response_holder->type == Request::Type::STOP_INFO) {
+            const auto& response = static_cast<const StopResponse&>(*response_holder);
+            stream << "\t\t\"buses\": [";
+            int i = 0;
+            for (const auto& bus : response.buses_for_stop) {
+                stream << endl << "\t\t\t\"" << bus << "\"";
+                i++;
+                if (i != response.buses_for_stop.size())
+                    stream << ",";
+            }
+            if (response.buses_for_stop.size()) stream << endl;
+            stream << "\t\t]" << endl;
+        } else if (response_holder->type == Request::Type::BUS_INFO) {
+            const auto& response = static_cast<const BusResponse&>(*response_holder);
+            stream << "\t\t\"stop_count\": " << response.stops_num << "," << endl;
+            stream << "\t\t\"unique_stop_count\": " << response.unique_stops_num << "," << endl;
+            stream << "\t\t\"route_length\": " << response.real_route_length << "," << endl;
+            stream << "\t\t\"curvature\": " << fixed << setprecision(16) << response.curvature << endl;
+        }
+        stream << "\t}";
+        j++;
+        if (j != responses.size())
+            stream << ",";
+        cout << endl;
     }
+    stream << "]" << endl;
 }
 
 int main() {
     TransportManager manager;
-    ProcessRequests(ReadRequests(ParseInputRequest), manager);
-    PrintResponses(ProcessRequests(ReadRequests(ParseOutputRequest), manager));
+    //ProcessRequests(ReadRequests(ParseInputRequest), manager);
+    //PrintResponses(ProcessRequests(ReadRequests(ParseOutputRequest), manager));
+    auto document = Json::Load(cin);
+    try {
+        ProcessRequests(ReadRequests(Json::ParseInputRequest, document.GetRoot().AsMap().at("base_requests")), manager);
+    }
+    catch (...) {
+        cerr << "base_requests" << endl;
+    }
+    try {
+        PrintResponses(ProcessRequests(ReadRequests(Json::ParseOutputRequest, document.GetRoot().AsMap().at("stat_requests")), manager));
+    }
+    catch (...) {
+        cerr << "stat_requests" << endl;
+
+    }
     return 0;
 }
