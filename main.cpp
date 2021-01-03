@@ -2,6 +2,10 @@
 #include <iostream>
 #include <fstream>
 #include "Json.h"
+#include "graph.h"
+#include "router.h"
+#include <numeric>
+#include <fstream>
 
 using namespace std;
 
@@ -67,12 +71,12 @@ struct Request {
         ADD_STOP,
         ADD_BUS,
         BUS_INFO,
-        STOP_INFO
+        STOP_INFO,
+        ROUTE_INFO
     };
 
     Request(Type type) : type(type) {}
     static RequestHolder Create(Type type);
-    virtual void ParseFrom(string_view input) = 0;
     virtual void ParseFrom(Json::Node input) = 0;
     virtual ~Request() = default;
 
@@ -87,6 +91,7 @@ const unordered_map<string_view, Request::Type> STR_TO_INPUT_REQUEST_TYPE = {
 const unordered_map<string_view, Request::Type> STR_TO_OUTPUT_REQUEST_TYPE = {
     {"Bus", Request::Type::BUS_INFO},
     {"Stop", Request::Type::STOP_INFO},
+    {"Route", Request::Type::ROUTE_INFO},
 };
 
 struct Response {
@@ -111,12 +116,26 @@ struct BusResponse : public Response {
     double curvature;
 };
 
+struct RouteResponse : public Response {
+    RouteResponse() : Response(Request::Type::ROUTE_INFO) {}
+    struct Item {
+        string type;
+        string name;
+        double time;
+        size_t span_count;
+    };
+    vector<Item> items;
+    double total_time;
+};
+
 using ResponseHolder = unique_ptr<Response>;
 
 template <typename ResultType>
 struct ReadRequest : Request {
     using Request::Request;
     virtual ResultType Process(const TransportManager& manager) const = 0;
+protected:
+    uint64_t request_id;
 };
 
 struct ModifyRequest : Request {
@@ -126,15 +145,6 @@ struct ModifyRequest : Request {
 
 struct AddStopRequest : ModifyRequest {
     AddStopRequest() : ModifyRequest(Type::ADD_STOP) {}
-    void ParseFrom(string_view input) override {
-        name = ReadToken(input, ":");
-        coordinate.latitude = ConvertToDouble(ReadToken(input, ","));
-        coordinate.longitude = ConvertToDouble(ReadToken(input, ","));
-        while (!input.empty()) {
-            int distance = ConvertToInt(ReadToken(input, "m to "));
-            distances[string(ReadToken(input, ","))] = distance;
-        }
-    }
     
     void ParseFrom(Json::Node input) override {
         name = input.AsMap().at("name").AsString();
@@ -159,20 +169,6 @@ private:
 
 struct AddBusRequest : ModifyRequest {
     AddBusRequest() : ModifyRequest(Type::ADD_BUS) {}
-    void ParseFrom(string_view input) override {
-        name = ReadToken(input, ":");
-        ReadToken(input, " ");
-        auto description = input;
-        while (!input.empty()) {
-            stops.push_back(string(ReadToken(input, " > ")));
-        }
-        if (stops.size() == 1) {
-            stops.clear();
-            while (!description.empty())
-                stops.push_back(string(ReadToken(description, " - ")));
-            is_reversed = true;
-        }
-    }
 
     void ParseFrom(Json::Node input) override {
         name = input.AsMap().at("name").AsString();
@@ -192,9 +188,6 @@ private:
 
 struct BusInfoRequest : ReadRequest<unique_ptr<BusResponse>> {
     BusInfoRequest() : ReadRequest<unique_ptr<BusResponse>>(Type::BUS_INFO) {}
-    void ParseFrom(string_view input) override {
-        name = ReadToken(input, ":");
-    }
 
     void ParseFrom(Json::Node input) override {
         name = input.AsMap().at("name").AsString();
@@ -216,17 +209,12 @@ struct BusInfoRequest : ReadRequest<unique_ptr<BusResponse>> {
         response->unique_stops_num = bus->GetUniqueStopsNum();
         return move(response);
     }
-
 private:
     string name;
-    uint64_t request_id;
 };
 
 struct StopInfoRequest : ReadRequest<unique_ptr<StopResponse>> {
     StopInfoRequest() : ReadRequest<unique_ptr<StopResponse>>(Type::STOP_INFO) {}
-    void ParseFrom(string_view input) override {
-        name = ReadToken(input, ":");
-    }
 
     void ParseFrom(Json::Node input) override {
         name = input.AsMap().at("name").AsString();
@@ -250,10 +238,39 @@ struct StopInfoRequest : ReadRequest<unique_ptr<StopResponse>> {
         response->buses_for_stop = buses_for_stop;
         return move(response);
     }
-
 private:
     string name;
-    uint64_t request_id;
+};
+
+struct RouteInfoRequest : ReadRequest<unique_ptr<RouteResponse>> {
+    RouteInfoRequest() : ReadRequest<unique_ptr<RouteResponse>>(Type::ROUTE_INFO) {}
+
+    void ParseFrom(Json::Node input) override {
+        request_id = input.AsMap().at("id").AsNumber();
+        from = input.AsMap().at("from").AsString();
+        to = input.AsMap().at("to").AsString();;
+    }
+
+    unique_ptr<RouteResponse> Process(const TransportManager& manager) const override {
+        unique_ptr<RouteResponse> response = make_unique<RouteResponse>();
+        auto route_info_items = manager.GetRoute(from, to);
+        response->total_time = 0;
+        if (route_info_items.empty() && (from != to)) response->error_message = "not found";
+        for (const auto& item : route_info_items) {
+            response->total_time += item.weight;
+            response->items.push_back({
+                    item.type,
+                    item.text,
+                    item.weight,
+                    item.stop_count,
+                });
+        }
+        response->respones_id = request_id;
+        return move(response);
+    }
+private:
+    string from, to;
+
 };
 
 RequestHolder Request::Create(Request::Type type) {
@@ -266,6 +283,8 @@ RequestHolder Request::Create(Request::Type type) {
         return make_unique<BusInfoRequest>();
     case Request::Type::STOP_INFO:
         return make_unique<StopInfoRequest>();
+    case Request::Type::ROUTE_INFO:
+        return make_unique<RouteInfoRequest>();
     default:
         return nullptr;
     }
@@ -290,70 +309,28 @@ optional<Request::Type> ConvertRequestTypeFromString(string_view type_str, const
     }
 }
 
-RequestHolder ParseInputRequest(string_view request_str) {
-    const auto request_type = ConvertRequestTypeFromString(ReadToken(request_str), STR_TO_INPUT_REQUEST_TYPE);
+RequestHolder ParseInputRequest(Json::Node request_node) {
+    const auto request_type = ConvertRequestTypeFromString(request_node.AsMap().at("type").AsString(), STR_TO_INPUT_REQUEST_TYPE);
     if (!request_type) {
         return nullptr;
     }
     RequestHolder request = Request::Create(*request_type);
     if (request) {
-        request->ParseFrom(request_str);
+        request->ParseFrom(request_node);
     };
     return request;
 }
 
-RequestHolder ParseOutputRequest(string_view request_str) {
-    const auto request_type = ConvertRequestTypeFromString(ReadToken(request_str), STR_TO_OUTPUT_REQUEST_TYPE);
+RequestHolder ParseOutputRequest(Json::Node request_node) {
+    const auto request_type = ConvertRequestTypeFromString(request_node.AsMap().at("type").AsString(), STR_TO_OUTPUT_REQUEST_TYPE);
     if (!request_type) {
         return nullptr;
     }
     RequestHolder request = Request::Create(*request_type);
     if (request) {
-        request->ParseFrom(request_str);
+        request->ParseFrom(request_node);
     };
     return request;
-}
-
-vector<RequestHolder> ReadRequests(const function<RequestHolder(string_view)>& ParseRequest, istream & in_stream = cin) {
-    const size_t request_count = ReadNumberOnLine<size_t>(in_stream);
-
-    vector<RequestHolder> requests;
-    requests.reserve(request_count);
-
-    for (size_t i = 0; i < request_count; ++i) {
-        string request_str;
-        getline(in_stream, request_str);
-        if (auto request = ParseRequest(request_str)) {
-            requests.push_back(move(request));
-        }
-    }
-    return requests;
-}
-
-namespace Json {
-    RequestHolder ParseInputRequest(Json::Node request_node) {
-        const auto request_type = ConvertRequestTypeFromString(request_node.AsMap().at("type").AsString(), STR_TO_INPUT_REQUEST_TYPE);
-        if (!request_type) {
-            return nullptr;
-        }
-        RequestHolder request = Request::Create(*request_type);
-        if (request) {
-            request->ParseFrom(request_node);
-        };
-        return request;
-    }
-
-    RequestHolder ParseOutputRequest(Json::Node request_node) {
-        const auto request_type = ConvertRequestTypeFromString(request_node.AsMap().at("type").AsString(), STR_TO_OUTPUT_REQUEST_TYPE);
-        if (!request_type) {
-            return nullptr;
-        }
-        RequestHolder request = Request::Create(*request_type);
-        if (request) {
-            request->ParseFrom(request_node);
-        };
-        return request;
-    }
 }
 
 vector<RequestHolder> ReadRequests(const function<RequestHolder(Json::Node)>& ParseRequest, Json::Node in) {
@@ -390,63 +367,91 @@ vector<ResponseHolder> ProcessRequests(const vector<RequestHolder> & requests, T
             const auto& request = static_cast<const StopInfoRequest&>(*request_holder);
             responses.push_back(request.Process(manager));
         }
+        else if (request_holder->type == Request::Type::ROUTE_INFO) {
+            const auto& request = static_cast<const RouteInfoRequest&>(*request_holder);
+            responses.push_back(request.Process(manager));
+        }
     }
     return responses;
 }
 
 void PrintResponses(const vector<ResponseHolder> & responses, ostream & stream = cout) {
     stream << "[" << endl;
-    int j = 0;
+    size_t response_counter = 0;
     for (const auto& response_holder : responses) {
         stream << "\t{" << endl;
         stream << "\t\t\"request_id\": " << response_holder->respones_id << "," << endl;
         if (!response_holder->error_message.empty()) {
             stream << "\t\t\"error_message\": \"" << response_holder->error_message << "\"" << endl;
-        } else if (response_holder->type == Request::Type::STOP_INFO) {
+        } 
+        else if (response_holder->type == Request::Type::STOP_INFO) {
             const auto& response = static_cast<const StopResponse&>(*response_holder);
             stream << "\t\t\"buses\": [";
-            int i = 0;
+            size_t bus_counter = 0;
             for (const auto& bus : response.buses_for_stop) {
                 stream << endl << "\t\t\t\"" << bus << "\"";
-                i++;
-                if (i != response.buses_for_stop.size())
+                bus_counter++;
+                if (bus_counter != response.buses_for_stop.size())
                     stream << ",";
             }
             if (response.buses_for_stop.size()) stream << endl;
             stream << "\t\t]" << endl;
-        } else if (response_holder->type == Request::Type::BUS_INFO) {
+        } 
+        else if (response_holder->type == Request::Type::BUS_INFO) {
             const auto& response = static_cast<const BusResponse&>(*response_holder);
             stream << "\t\t\"stop_count\": " << response.stops_num << "," << endl;
             stream << "\t\t\"unique_stop_count\": " << response.unique_stops_num << "," << endl;
             stream << "\t\t\"route_length\": " << response.real_route_length << "," << endl;
-            stream << "\t\t\"curvature\": " << fixed << setprecision(16) << response.curvature << endl;
+            stream << "\t\t\"curvature\": " << setprecision(16) << response.curvature << endl;
+        }
+        else if (response_holder->type == Request::Type::ROUTE_INFO) {
+            const auto& response = static_cast<const RouteResponse&>(*response_holder);
+            stream << "\t\t\"total_time\": "  << setprecision(16) << response.total_time << "," << endl;
+            stream << "\t\t\"items\": [" << endl;
+            int items_counter = 0;
+            for (const auto& item : response.items) {
+                stream << "\t\t\t{" << endl;
+                stream << "\t\t\t\t\"type\": \"" << item.type << "\"," << endl;
+                if (item.type == "Bus") {
+                    stream << "\t\t\t\t\"bus\": \"" << item.name << "\"," << endl;
+                    stream << "\t\t\t\t\"span_count\": " << item.span_count << "," << endl;
+                }
+                else {
+                    stream << "\t\t\t\t\"stop_name\": \"" << item.name << "\"," << endl;
+                }
+                stream << "\t\t\t\t\"time\": " << setprecision(16) << item.time << endl;
+                stream << "\t\t\t}";
+                items_counter++;
+                if (items_counter != response.items.size()) stream << ",";
+                stream << endl;
+            }
+            stream << "\t\t]" << endl;
         }
         stream << "\t}";
-        j++;
-        if (j != responses.size())
+        response_counter++;
+        if (response_counter != responses.size())
             stream << ",";
-        cout << endl;
+        stream << endl;
     }
     stream << "]" << endl;
 }
 
 int main() {
-    TransportManager manager;
-    //ProcessRequests(ReadRequests(ParseInputRequest), manager);
-    //PrintResponses(ProcessRequests(ReadRequests(ParseOutputRequest), manager));
-    auto document = Json::Load(cin);
+    ofstream out("C:\\Users\\User\\Desktop\\Coursera\\out.txt");
     try {
-        ProcessRequests(ReadRequests(Json::ParseInputRequest, document.GetRoot().AsMap().at("base_requests")), manager);
-    }
-    catch (...) {
-        cerr << "base_requests" << endl;
-    }
-    try {
-        PrintResponses(ProcessRequests(ReadRequests(Json::ParseOutputRequest, document.GetRoot().AsMap().at("stat_requests")), manager));
-    }
-    catch (...) {
-        cerr << "stat_requests" << endl;
+        auto document = Json::Load(cin);
+        const auto& settings = document.GetRoot().AsMap().at("routing_settings").AsMap();
+        TransportManager manager(settings.at("bus_wait_time").AsNumber(), settings.at("bus_velocity").AsNumber());
+        ProcessRequests(ReadRequests(ParseInputRequest, document.GetRoot().AsMap().at("base_requests")), manager);
 
+        manager.BuildRouter();
+
+        PrintResponses(ProcessRequests(ReadRequests(ParseOutputRequest, document.GetRoot().AsMap().at("stat_requests")), manager), cout);
+
+        out.close();
+    }
+    catch (...) {
+        cerr << "ERROR" << endl;
     }
     return 0;
 }

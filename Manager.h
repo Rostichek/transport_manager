@@ -1,4 +1,5 @@
 #pragma once
+
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <cstdint>
@@ -19,12 +20,23 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include "graph.h"
+#include "router.h"
 
 using namespace std;
 
 class TransportManager;
 class Bus;
 class Stop;
+
+struct EdgeWeight {
+    EdgeWeight() = default;
+    EdgeWeight(int val) : time(val) {}
+    string type;
+    string text;
+    double time = 0;
+    size_t stop_count = 0;
+};
 
 struct Coordinate {
     double
@@ -36,7 +48,10 @@ double ComputeDistance(const Coordinate& lhs, const Coordinate& rhs);
 
 class TransportManager {
 public:
-    TransportManager() = default;
+    TransportManager(size_t bus_wait_time, size_t bus_velocity) : 
+        bus_wait_time_(bus_wait_time),
+        bus_velocity_(bus_velocity)
+    {}
 
     void AddStop(string stop_name, Coordinate coordinate);
 
@@ -46,18 +61,33 @@ public:
 
     const Bus* GetBus(const string& bus_name) const;
 
+    vector<Graph::Edge<double>> GetRoute(const string& from, const string& to) const;
+
     const unordered_map<string, unique_ptr<Bus>>& GetBuses() const;
 
     const Stop* GetStop(const string& stop_name) const;
 
+    void BuildRouter();
+
+    void ReleaseRoute(uint64_t id) {
+        router->ReleaseRoute(id);
+    }
+
 private:
+    size_t stops_coutner = 0;
     unordered_map<string, unique_ptr<Stop>> stops_;
     unordered_map<string, unique_ptr<Bus>> buses_;
+
+    size_t bus_wait_time_ = 0;
+    size_t bus_velocity_ = 0;
+
+    unique_ptr<Graph::DirectedWeightedGraph<double>> graph_;
+    unique_ptr<Graph::Router<double>> router;
 };
 
-class Stop : public TransportManager {
+class Stop {
 public:
-    Stop(const string& name, Coordinate coordinate) : name_(name), coordinate_(coordinate) {}
+    Stop(const string& name, Coordinate coordinate, size_t indx) : name_(name), coordinate_(coordinate), indx_(indx) {}
 
     string_view GetName() { return string_view(name_); }
 
@@ -69,13 +99,18 @@ public:
 
     const Coordinate& GetCoordinate() const { return coordinate_; }
 
+    pair<size_t, size_t> GetIndx() const {
+        return { indx_, indx_ + 1 };
+    }
+
 private:
+    size_t indx_;
     string name_;
     Coordinate coordinate_;
     unordered_map<string, int> distances_;
 };
 
-class Bus : public TransportManager {
+class Bus{
 public:
     Bus(const string& name, vector<string> stops, bool is_reversed) : name_(name), stops_(stops), is_reversed_(is_reversed) {}
 
@@ -103,6 +138,12 @@ public:
     bool Find(const string& stop_name) const {
         return (find(stops_.begin(), stops_.end(), stop_name) != stops_.end());
     }
+
+    const auto& GetStops() {
+        return stops_;
+    }
+
+    bool IsReversed() { return is_reversed_; }
 
 private:
     string name_;
