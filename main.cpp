@@ -72,7 +72,8 @@ struct Request {
         ADD_BUS,
         BUS_INFO,
         STOP_INFO,
-        ROUTE_INFO
+        ROUTE_INFO,
+        MAP,
     };
 
     Request(Type type) : type(type) {}
@@ -92,6 +93,7 @@ const unordered_map<string_view, Request::Type> STR_TO_OUTPUT_REQUEST_TYPE = {
     {"Bus", Request::Type::BUS_INFO},
     {"Stop", Request::Type::STOP_INFO},
     {"Route", Request::Type::ROUTE_INFO},
+    {"Map", Request::Type::MAP},
 };
 
 struct Response {
@@ -126,6 +128,11 @@ struct RouteResponse : public Response {
     };
     vector<Item> items;
     double total_time;
+};
+
+struct MapResponse : public Response {
+    MapResponse() : Response(Request::Type::MAP) {}
+    string svg;
 };
 
 using ResponseHolder = unique_ptr<Response>;
@@ -273,6 +280,25 @@ private:
 
 };
 
+struct MapRequest : ReadRequest<unique_ptr<MapResponse>> {
+    MapRequest() : ReadRequest<unique_ptr<MapResponse>>(Type::MAP) {}
+
+    void ParseFrom(Json::Node input) override {
+        request_id = input.AsMap().at("id").AsNumber();
+    }
+
+    unique_ptr<MapResponse> Process(const TransportManager& manager) const override {
+        unique_ptr<MapResponse> response = make_unique<MapResponse>();
+        response->svg = manager.GetMap();
+        response->respones_id = request_id;
+        return move(response);
+        throw(out_of_range("Map did not rendered;"));
+        return nullptr;
+    }
+private:
+    string name;
+};
+
 RequestHolder Request::Create(Request::Type type) {
     switch (type) {
     case Request::Type::ADD_STOP:
@@ -285,6 +311,8 @@ RequestHolder Request::Create(Request::Type type) {
         return make_unique<StopInfoRequest>();
     case Request::Type::ROUTE_INFO:
         return make_unique<RouteInfoRequest>();
+    case Request::Type::MAP:
+        return make_unique<MapRequest>();
     default:
         return nullptr;
     }
@@ -371,6 +399,10 @@ vector<ResponseHolder> ProcessRequests(const vector<RequestHolder> & requests, T
             const auto& request = static_cast<const RouteInfoRequest&>(*request_holder);
             responses.push_back(request.Process(manager));
         }
+        else if (request_holder->type == Request::Type::MAP) {
+            const auto& request = static_cast<const MapRequest&>(*request_holder);
+            responses.push_back(request.Process(manager));
+        }
     }
     return responses;
 }
@@ -427,6 +459,10 @@ void PrintResponses(const vector<ResponseHolder> & responses, ostream & stream =
             }
             stream << "\t\t]" << endl;
         }
+        else if (response_holder->type == Request::Type::MAP) {
+            const auto& response = static_cast<const MapResponse&>(*response_holder);
+            stream << "\t\t\"map\": " /*<< "\""*/ << response.svg/* << "\""*/ << endl;
+        }
         stream << "\t}";
         response_counter++;
         if (response_counter != responses.size())
@@ -445,13 +481,14 @@ int main() {
         ProcessRequests(ReadRequests(ParseInputRequest, document.GetRoot().AsMap().at("base_requests")), manager);
 
         manager.BuildRouter();
+        manager.BuildMap(document.GetRoot().AsMap().at("render_settings").AsMap());
 
         PrintResponses(ProcessRequests(ReadRequests(ParseOutputRequest, document.GetRoot().AsMap().at("stat_requests")), manager), cout);
 
         out.close();
     }
     catch (...) {
-        cerr << "ERROR" << endl;
+        cerr << "Yout JSON is not have all information for build response or there are an format error;" << endl;
     }
     return 0;
 }

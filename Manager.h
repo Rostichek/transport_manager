@@ -16,12 +16,15 @@
 #include <string>
 #include <system_error>
 #include <type_traits>
+#include <map>
 #include <iomanip>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
 #include "graph.h"
+#include "Json.h"
 #include "router.h"
+#include "svg.h"
 
 using namespace std;
 
@@ -37,6 +40,48 @@ struct EdgeWeight {
     double time = 0;
     size_t stop_count = 0;
 };
+
+namespace Map {
+    class Map {
+    public:
+        Map() = delete;
+        Map(const std::map<std::string, Json::Node>&, const TransportManager&);
+
+        void RenderMap();
+
+        string GetMap() const {
+            return map;
+        }
+
+    private:
+        const TransportManager& manager;
+        Svg::Document svg;
+        string map = "";
+        struct Properties {
+            double width;
+            double height;
+            double padding;
+            double stop_radius;
+            double line_width;
+            size_t stop_label_font_size;
+            Svg::Point stop_label_offset;
+            Svg::Color underlayer_color;
+            double underlayer_width;
+            vector<Svg::Color> color_palette;
+        } properties;
+
+        struct Coeffitients {
+            double min_lon, min_lat, max_lon, max_lat, zoom_coef;
+        };
+
+        void ComputeCoeff(Coeffitients& coeff);
+        void AddRounds(const Coeffitients& coeff);
+        void AddStops(const Coeffitients& coeff);
+        void AddNames(const Coeffitients& coeff);
+
+        
+    };
+}
 
 struct Coordinate {
     double
@@ -65,15 +110,37 @@ public:
 
     const unordered_map<string, unique_ptr<Bus>>& GetBuses() const;
 
+    const unordered_map<string, unique_ptr<Stop>>& GetStops() const;
+
     const Stop* GetStop(const string& stop_name) const;
 
     void BuildRouter();
+
+    void BuildMap(std::map<std::string, Json::Node> properties) {
+        map_ = make_unique<Map::Map>(properties, *this);
+        map_.get()->RenderMap();
+    }
+
+    string GetMap() const {
+        return string(map_.get()->GetMap());
+    }
 
     void ReleaseRoute(uint64_t id) {
         router->ReleaseRoute(id);
     }
 
+    const Coordinate& GetMinCoodinate() const {
+        return min_coordinate;
+    }
+
+    const Coordinate& GetMaxCoodinate() const {
+        return max_coordinate;
+    }
+
 private:
+    Coordinate max_coordinate;
+    Coordinate min_coordinate;
+
     size_t stops_coutner = 0;
     unordered_map<string, unique_ptr<Stop>> stops_;
     unordered_map<string, unique_ptr<Bus>> buses_;
@@ -83,6 +150,8 @@ private:
 
     unique_ptr<Graph::DirectedWeightedGraph<double>> graph_;
     unique_ptr<Graph::Router<double>> router;
+
+    unique_ptr<Map::Map> map_;
 };
 
 class Stop {
@@ -139,11 +208,11 @@ public:
         return (find(stops_.begin(), stops_.end(), stop_name) != stops_.end());
     }
 
-    const auto& GetStops() {
+    const auto& GetStops() const {
         return stops_;
     }
 
-    bool IsReversed() { return is_reversed_; }
+    bool IsReversed() const { return is_reversed_; }
 
 private:
     string name_;
