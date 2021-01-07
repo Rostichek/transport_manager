@@ -31,6 +31,8 @@ namespace Svg {
 			<< ComposeProperty("font-size", font_size_);
 		if (font_family_.has_value())
 			out << ComposeProperty("font-family", font_family_.value());
+		if (font_weight_.has_value())
+			out << ComposeProperty("font-weight", font_weight_.value());
 		out << " >";
 		out << text_;
 		return out.str();

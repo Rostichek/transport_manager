@@ -181,12 +181,18 @@ namespace Svg {
 			return *this;
 		}
 
+		Text& SetFontWeight(const string& weight) {
+			font_weight_ = weight;
+			return *this;
+		}
+
 		string PrintTextProperties() const;
 	private:
 		Point coord_ = { 0,0 };
 		Point offset_ = { 0,0 };
 		uint32_t font_size_ = 1;
 		optional<string> font_family_;
+		optional<string> font_weight_;
 		string text_;
 	};
 

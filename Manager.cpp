@@ -199,9 +199,14 @@ Map::Map::Map(const std::map<std::string, Json::Node>& json_properties, const Tr
     properties.stop_radius = json_properties.at("stop_radius").AsNumber();
     properties.line_width = json_properties.at("line_width").AsNumber();
     properties.stop_label_font_size = json_properties.at("stop_label_font_size").AsNumber();
+    properties.bus_label_font_size = json_properties.at("bus_label_font_size").AsNumber();
     properties.stop_label_offset = {
         json_properties.at("stop_label_offset").AsArray().front().AsNumber(),
         json_properties.at("stop_label_offset").AsArray().back().AsNumber()
+    };
+    properties.bus_label_offset = {
+        json_properties.at("bus_label_offset").AsArray().front().AsNumber(),
+        json_properties.at("bus_label_offset").AsArray().back().AsNumber()
     };
     properties.underlayer_color = ReadColor(json_properties.at("underlayer_color"));
     properties.underlayer_width = json_properties.at("underlayer_width").AsNumber();
@@ -243,6 +248,75 @@ void Map::Map::AddRounds(const Coeffitients& coeff) {
             }
         }
         svg.Add(round);
+        bus_num++;
+    }
+}
+
+void Map::Map::AddBusNames(const Coeffitients& coeff) {
+    const auto& buses = manager.GetBuses();
+    set<string_view> bus_names;
+    for (const auto& bus : buses)
+        bus_names.insert(bus.first);
+    size_t bus_num = 0;
+    for (const auto& bus_name : bus_names) {
+        const auto* bus = manager.GetBus(string(bus_name));
+        const auto& stops = bus->GetStops();
+        const auto& stop_coord = manager.GetStop(stops.front())->GetCoordinate();
+        svg.Add(Svg::Text{}
+            .SetPoint({
+                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
+                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                })
+            .SetOffset(properties.bus_label_offset)
+            .SetFontSize(properties.bus_label_font_size)
+            .SetFontFamily("Verdana")
+            .SetData(string(bus_name))
+            .SetFillColor(properties.underlayer_color)
+            .SetStrokeColor(properties.underlayer_color)
+            .SetStrokeWidth(properties.underlayer_width)
+            .SetStrokeLineCap("round")
+            .SetFontWeight("bold")
+            .SetStrokeLineJoin("round"));
+        svg.Add(Svg::Text{}
+            .SetPoint({
+                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
+                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                })
+            .SetOffset(properties.bus_label_offset)
+            .SetFontSize(properties.bus_label_font_size)
+            .SetFontFamily("Verdana")
+            .SetFontWeight("bold")
+            .SetData(string(bus_name))
+            .SetFillColor(properties.color_palette.at(bus_num % (properties.color_palette.size()))));
+        if (bus->IsReversed() && (stops.front() != stops.back())) {
+            const auto& stop_coord = manager.GetStop(stops.back())->GetCoordinate();
+            svg.Add(Svg::Text{}
+                .SetPoint({
+                        (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
+                        (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    })
+                .SetOffset(properties.bus_label_offset)
+                .SetFontSize(properties.bus_label_font_size)
+                .SetFontFamily("Verdana")
+                .SetData(string(bus_name))
+                .SetFillColor(properties.underlayer_color)
+                .SetStrokeColor(properties.underlayer_color)
+                .SetStrokeWidth(properties.underlayer_width)
+                .SetFontWeight("bold")
+                .SetStrokeLineCap("round")
+                .SetStrokeLineJoin("round"));
+            svg.Add(Svg::Text{}
+                .SetPoint({
+                        (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
+                        (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    })
+                .SetOffset(properties.bus_label_offset)
+                .SetFontSize(properties.bus_label_font_size)
+                .SetFontFamily("Verdana")
+                .SetFontWeight("bold")
+                .SetData(string(bus_name))
+                .SetFillColor(properties.color_palette.at(bus_num % (properties.color_palette.size()))));
+        }
         bus_num++;
     }
 }
@@ -326,6 +400,7 @@ void Map::Map::RenderMap() {
     Coeffitients coeff;
     ComputeCoeff(coeff);
     AddRounds(coeff);
+    AddBusNames(coeff);
     AddStops(coeff);
     AddNames(coeff);
     stringstream out;

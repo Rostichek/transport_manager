@@ -68,6 +68,8 @@ namespace Map {
             Svg::Color underlayer_color;
             double underlayer_width;
             vector<Svg::Color> color_palette;
+            size_t bus_label_font_size;
+            Svg::Point bus_label_offset;
         } properties;
 
         struct Coeffitients {
@@ -78,6 +80,7 @@ namespace Map {
         void AddRounds(const Coeffitients& coeff);
         void AddStops(const Coeffitients& coeff);
         void AddNames(const Coeffitients& coeff);
+        void AddBusNames(const Coeffitients& coeff);
 
         
     };
