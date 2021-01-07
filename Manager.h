@@ -14,6 +14,7 @@
 #include <sstream>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <system_error>
 #include <type_traits>
 #include <map>
@@ -54,6 +55,20 @@ namespace Map {
         }
 
     private:
+        enum class LayerType {
+            BUS_LINES,
+            BUS_LABELS,
+            STOP_POINTS,
+            STOP_LABELS
+        };
+
+        const unordered_map<string_view, LayerType> STR_TO_LAYER_TYPE = {
+            {"bus_lines", LayerType::BUS_LINES},
+            {"bus_labels", LayerType::BUS_LABELS},
+            {"stop_points", LayerType::STOP_POINTS},
+            {"stop_labels", LayerType::STOP_LABELS},
+        };
+
         const TransportManager& manager;
         Svg::Document svg;
         string map = "";
@@ -70,6 +85,7 @@ namespace Map {
             vector<Svg::Color> color_palette;
             size_t bus_label_font_size;
             Svg::Point bus_label_offset;
+            vector<LayerType> layers;
         } properties;
 
         struct Coeffitients {

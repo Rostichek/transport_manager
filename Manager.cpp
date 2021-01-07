@@ -215,6 +215,11 @@ Map::Map::Map(const std::map<std::string, Json::Node>& json_properties, const Tr
     for (const auto& color : pallete) {
         properties.color_palette.push_back(ReadColor(color));
     }
+    const auto& layers = json_properties.at("layers").AsArray();
+    properties.layers.reserve(layers.size());
+    for (const auto& layer : layers) {
+        properties.layers.push_back(STR_TO_LAYER_TYPE.at(layer.AsString()));
+    }
 }
 
 void Map::Map::AddRounds(const Coeffitients& coeff) {
@@ -399,10 +404,27 @@ void Map::Map::AddNames(const Coeffitients& coeff) {
 void Map::Map::RenderMap() {
     Coeffitients coeff;
     ComputeCoeff(coeff);
-    AddRounds(coeff);
-    AddBusNames(coeff);
-    AddStops(coeff);
-    AddNames(coeff);
+    for (auto layer : properties.layers) {
+        switch (layer) {
+        case LayerType::BUS_LABELS: {
+            AddBusNames(coeff);
+            break;
+        }
+        case LayerType::BUS_LINES: {
+            AddRounds(coeff);
+            break;
+        }
+        case LayerType::STOP_LABELS: {
+            AddNames(coeff);
+            break;
+        }
+        case LayerType::STOP_POINTS: {
+            AddStops(coeff);
+            break;
+        }
+        default: break;
+        }
+    }
     stringstream out;
     svg.Render(out);
     stringstream result;
