@@ -220,9 +220,10 @@ Map::Map::Map(const std::map<std::string, Json::Node>& json_properties, const Tr
     for (const auto& layer : layers) {
         properties.layers.push_back(STR_TO_LAYER_TYPE.at(layer.AsString()));
     }
+    ComputeStopsCoordinates();
 }
 
-void Map::Map::AddRounds(const Coeffitients& coeff) {
+void Map::Map::AddRounds() {
     const auto& buses = manager.GetBuses();
     set<string_view> bus_names;
     for (const auto& bus : buses)
@@ -237,18 +238,18 @@ void Map::Map::AddRounds(const Coeffitients& coeff) {
             .SetStrokeLineCap("round")
             .SetStrokeLineJoin("round");
         for (const auto& stop_name : stops) {
-            const auto& stop_coord = manager.GetStop(stop_name)->GetCoordinate();
+            const auto& stop_coord = stops_coodinates.at(stop_name);
             round.AddPoint({
-                (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                 });
         }
         if (bus->IsReversed()) {
             for (auto it = stops.rbegin() + 1; it != stops.rend(); it++) {
-                const auto& stop_coord = manager.GetStop(*it)->GetCoordinate();
+                const auto& stop_coord = stops_coodinates.at(*it);
                 round.AddPoint({
-                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                     });
             }
         }
@@ -257,7 +258,7 @@ void Map::Map::AddRounds(const Coeffitients& coeff) {
     }
 }
 
-void Map::Map::AddBusNames(const Coeffitients& coeff) {
+void Map::Map::AddBusNames() {
     const auto& buses = manager.GetBuses();
     set<string_view> bus_names;
     for (const auto& bus : buses)
@@ -266,11 +267,11 @@ void Map::Map::AddBusNames(const Coeffitients& coeff) {
     for (const auto& bus_name : bus_names) {
         const auto* bus = manager.GetBus(string(bus_name));
         const auto& stops = bus->GetStops();
-        const auto& stop_coord = manager.GetStop(stops.front())->GetCoordinate();
+        const auto& stop_coord = stops_coodinates.at(stops.front());
         svg.Add(Svg::Text{}
             .SetPoint({
-                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                 })
             .SetOffset(properties.bus_label_offset)
             .SetFontSize(properties.bus_label_font_size)
@@ -284,8 +285,8 @@ void Map::Map::AddBusNames(const Coeffitients& coeff) {
             .SetStrokeLineJoin("round"));
         svg.Add(Svg::Text{}
             .SetPoint({
-                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                 })
             .SetOffset(properties.bus_label_offset)
             .SetFontSize(properties.bus_label_font_size)
@@ -294,11 +295,11 @@ void Map::Map::AddBusNames(const Coeffitients& coeff) {
             .SetData(string(bus_name))
             .SetFillColor(properties.color_palette.at(bus_num % (properties.color_palette.size()))));
         if (bus->IsReversed() && (stops.front() != stops.back())) {
-            const auto& stop_coord = manager.GetStop(stops.back())->GetCoordinate();
+            const auto& stop_coord = stops_coodinates.at(stops.back());
             svg.Add(Svg::Text{}
                 .SetPoint({
-                        (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                        (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                     })
                 .SetOffset(properties.bus_label_offset)
                 .SetFontSize(properties.bus_label_font_size)
@@ -312,8 +313,8 @@ void Map::Map::AddBusNames(const Coeffitients& coeff) {
                 .SetStrokeLineJoin("round"));
             svg.Add(Svg::Text{}
                 .SetPoint({
-                        (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                        (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                     })
                 .SetOffset(properties.bus_label_offset)
                 .SetFontSize(properties.bus_label_font_size)
@@ -326,58 +327,34 @@ void Map::Map::AddBusNames(const Coeffitients& coeff) {
     }
 }
 
-void Map::Map::ComputeCoeff(Coeffitients& coeff) {
-    coeff.min_lon = manager.GetMinCoodinate().longitude;
-    coeff.min_lat = manager.GetMinCoodinate().latitude;
-    coeff.max_lon = manager.GetMaxCoodinate().longitude;
-    coeff.max_lat = manager.GetMaxCoodinate().latitude;
-    optional<double> width_zoom_coef, height_zoom_coef;
-    if (coeff.max_lon != coeff.min_lon) {
-        width_zoom_coef = (properties.width - 2 * properties.padding) / (coeff.max_lon - coeff.min_lon);
-    }
-    if (coeff.max_lat != coeff.min_lat) {
-        height_zoom_coef = (properties.height - 2 * properties.padding) / (coeff.max_lat - coeff.min_lat);
-    }
-    if (width_zoom_coef.has_value() && height_zoom_coef.has_value()) {
-        coeff.zoom_coef = min(width_zoom_coef.value(), height_zoom_coef.value());
-    }
-    else if (!width_zoom_coef.has_value() && !height_zoom_coef.has_value()) {
-        coeff.zoom_coef = 0;
-    }
-    else if (height_zoom_coef.has_value()) {
-        coeff.zoom_coef = height_zoom_coef.value();
-    }
-    else  coeff.zoom_coef = width_zoom_coef.value();
-}
-
-void Map::Map:: AddStops(const Coeffitients& coeff) {
+void Map::Map:: AddStops() {
     const auto& stops = manager.GetStops();
     set<string_view> stop_names;
     for (const auto& stop : stops)
         stop_names.insert(stop.first);
     for (const auto& stop_name : stop_names) {
-        const auto& stop_coord = manager.GetStop(string(stop_name))->GetCoordinate();
+        const auto& stop_coord = stops_coodinates.at(stop_name);
         svg.Add(Svg::Circle{}
             .SetCenter({
-                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
             })
             .SetRadius(properties.stop_radius)
             .SetFillColor("white"));
     }
 }
 
-void Map::Map::AddNames(const Coeffitients& coeff) {
+void Map::Map::AddNames() {
     const auto& stops = manager.GetStops();
     set<string_view> stop_names;
     for (const auto& stop : stops)
         stop_names.insert(stop.first);
     for (const auto& stop_name : stop_names) {
-        const auto& stop_coord = manager.GetStop(string(stop_name))->GetCoordinate();
+        const auto& stop_coord = stops_coodinates.at(stop_name);
         svg.Add(Svg::Text{}
             .SetPoint({
-                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                 })
             .SetOffset(properties.stop_label_offset)
             .SetFontSize(properties.stop_label_font_size)
@@ -390,8 +367,8 @@ void Map::Map::AddNames(const Coeffitients& coeff) {
             .SetStrokeLineJoin("round"));
         svg.Add(Svg::Text{}
             .SetPoint({
-                    (stop_coord.longitude - coeff.min_lon) * coeff.zoom_coef + properties.padding,
-                    (coeff.max_lat - stop_coord.latitude) * coeff.zoom_coef + properties.padding
+                    stop_coord.longitude,
+                    stop_coord.latitude
                 })
             .SetOffset(properties.stop_label_offset)
             .SetFontSize(properties.stop_label_font_size)
@@ -401,25 +378,67 @@ void Map::Map::AddNames(const Coeffitients& coeff) {
     }
 }
 
+void Map::Map::ComputeStopsCoordinates() {
+    const auto& stops = manager.GetStops();
+    struct StopPosition {
+        string_view name;
+        Coordinate coordinate;
+        struct Indexes {
+            size_t longitude = 0;
+            size_t latitude = 0;
+        }idx;
+    };
+    vector<StopPosition> coordinates;
+    coordinates.reserve(stops.size());
+    size_t i = 0;
+    for (const auto& stop : stops) {
+        coordinates.push_back({ stop.first, stop.second->GetCoordinate() });
+        i++;
+    }
+    if (!coordinates.size()) return;
+    if (coordinates.size() == 1) {
+        stops_coodinates[coordinates.front().name].longitude = properties.padding;
+        stops_coodinates[coordinates.front().name].latitude = properties.height - properties.padding;
+        return;
+    }
+    const double x_step = (properties.width - 2 * properties.padding) / (coordinates.size() - 1);
+    const double y_step = (properties.height - 2 * properties.padding) / (coordinates.size() - 1);
+
+    sort(coordinates.begin(), coordinates.end(), [](const StopPosition& lhs, const StopPosition& rhs) {
+        return lhs.coordinate.longitude < rhs.coordinate.longitude;
+        });
+    size_t idx = 0;
+    for (auto& coordinate : coordinates)
+        coordinate.coordinate.longitude = properties.padding + x_step * (coordinate.idx.longitude = idx++);
+
+    sort(coordinates.begin(), coordinates.end(), [](const StopPosition& lhs, const StopPosition& rhs) {
+        return lhs.coordinate.latitude < rhs.coordinate.latitude;
+        });
+    idx = 0;
+    for (auto& coordinate : coordinates)
+        coordinate.coordinate.latitude = properties.height - properties.padding - y_step * (coordinate.idx.longitude = idx++);
+
+    for (const auto& coordinate : coordinates)
+        stops_coodinates[coordinate.name] = coordinate.coordinate;
+}
+
 void Map::Map::RenderMap() {
-    Coeffitients coeff;
-    ComputeCoeff(coeff);
     for (auto layer : properties.layers) {
         switch (layer) {
         case LayerType::BUS_LABELS: {
-            AddBusNames(coeff);
+            AddBusNames();
             break;
         }
         case LayerType::BUS_LINES: {
-            AddRounds(coeff);
+            AddRounds();
             break;
         }
         case LayerType::STOP_LABELS: {
-            AddNames(coeff);
+            AddNames();
             break;
         }
         case LayerType::STOP_POINTS: {
-            AddStops(coeff);
+            AddStops();
             break;
         }
         default: break;

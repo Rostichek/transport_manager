@@ -42,6 +42,12 @@ struct EdgeWeight {
     size_t stop_count = 0;
 };
 
+struct Coordinate {
+    double
+        latitude = 0.0,
+        longitude = 0.0;
+};
+
 namespace Map {
     class Map {
     public:
@@ -88,25 +94,17 @@ namespace Map {
             vector<LayerType> layers;
         } properties;
 
-        struct Coeffitients {
-            double min_lon, min_lat, max_lon, max_lat, zoom_coef;
-        };
+        unordered_map<string_view, Coordinate> stops_coodinates;
 
-        void ComputeCoeff(Coeffitients& coeff);
-        void AddRounds(const Coeffitients& coeff);
-        void AddStops(const Coeffitients& coeff);
-        void AddNames(const Coeffitients& coeff);
-        void AddBusNames(const Coeffitients& coeff);
+        void ComputeStopsCoordinates();
+        void AddRounds();
+        void AddStops();
+        void AddNames();
+        void AddBusNames();
 
         
     };
 }
-
-struct Coordinate {
-    double
-        latitude = 0.0,
-        longitude = 0.0;
-};
 
 double ComputeDistance(const Coordinate& lhs, const Coordinate& rhs);
 
