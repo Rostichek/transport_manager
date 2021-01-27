@@ -487,7 +487,8 @@ int main() {
 
         out.close();
     }
-    catch (...) {
+    catch (exception& ex) {
+        cerr << ex.what() << endl;
         cerr << "Yout JSON is not have all information for build response or there are an format error;" << endl;
     }
     return 0;

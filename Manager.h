@@ -105,6 +105,7 @@ namespace Map {
                 size_t longitude = 0;
                 size_t latitude = 0;
             }idx;
+            bool is_base = false;
         };
 
         void ComputeStopsCoordinates();
@@ -114,6 +115,8 @@ namespace Map {
         void AddBusNames();
         bool IsNearby(const vector<StopPosition>& coordinates, const list<size_t>& idx_range) const;
         vector<list<size_t>> Paginator(vector<StopPosition> coordinates) const;
+        void FindBaseStops(vector<StopPosition>& coordinates) const;
+        void Interpolation(vector<StopPosition>& coordinates) const;
 
     };
 }

@@ -1,5 +1,5 @@
 #include "svg.h"
-
+#include <sstream>
 
 namespace Svg {
 	string ComposeProperty(const string& name, const string& value) {
@@ -7,7 +7,9 @@ namespace Svg {
 	}
 
 	string ComposeProperty(const string& name, const double value) {
-		return  " " + name + "=\"" + to_string(value) + "\"";
+		stringstream out;
+		out << " " << name << "=\"" << value << "\"";
+		return out.str();
 	}
 
 	string ComposeProperty(const string& name, uint32_t value) {

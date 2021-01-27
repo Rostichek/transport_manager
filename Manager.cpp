@@ -434,13 +434,60 @@ vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const
             coordinates[position].idx.axis = idx;                                                               \
 }
 
+void Map::Map::FindBaseStops(vector<StopPosition>& coordinates) const {
+    for (auto& coordinate : coordinates) {
+        size_t buses_counter = 0;
+        string stop_name = string(coordinate.name);
+        for (const auto& [bus_name, bus] : manager.GetBuses()) {
+            if (bus->Find(stop_name)) {
+                size_t counter = 0;
+                for (const auto& stop : bus->GetStops())
+                    if (stop == stop_name) counter++;
+                if (bus->IsReversed() && counter > 1) coordinate.is_base = true;
+                if (!bus->IsReversed() && counter > 2) coordinate.is_base = true;
+                buses_counter++;
+                auto& route = bus->GetStops();
+                if (route.front() == stop_name) coordinate.is_base = true;
+                if (bus->IsReversed() && (route.front() != route.back()) && route.back() == stop_name) coordinate.is_base = true;
+            }
+        }
+        if (buses_counter != 1) coordinate.is_base = true;
+    }
+}
+
+void Map::Map::Interpolation(vector<StopPosition>& coordinates) const {
+    FindBaseStops(coordinates);
+    unordered_map<string, StopPosition*> coordinates_map;
+    for (auto& coordinate : coordinates)
+        coordinates_map[string(coordinate.name)] = &coordinate;
+
+    for (const auto& [bus_name, bus] : manager.GetBuses()) {
+        auto& stops = bus->GetStops();
+        size_t i = 0, j = 0;
+        for (const auto& stop : stops) {
+            if (coordinates_map[stop]->is_base && i != j) {
+                double lon_step = (coordinates_map[stops[j]]->coordinate.longitude - coordinates_map[stops[i]]->coordinate.longitude) / (j - i);
+                for (size_t k = i + 1; k < j; ++k) {
+                    coordinates_map[stops[k]]->coordinate.longitude = coordinates_map[stops[i]]->coordinate.longitude + lon_step * (k - i);
+                }
+                double lat_step = (coordinates_map[stops[j]]->coordinate.latitude - coordinates_map[stops[i]]->coordinate.latitude) / (j - i);
+                for (size_t k = i + 1; k < j; ++k) {
+                    coordinates_map[stops[k]]->coordinate.latitude = coordinates_map[stops[i]]->coordinate.latitude + lat_step * (k - i);
+                }
+                i = j;
+            }
+            j++;
+        }
+    }
+}
+
 void Map::Map::ComputeStopsCoordinates() {
     const auto& stops = manager.GetStops();
     vector<StopPosition> coordinates;
     coordinates.reserve(stops.size());
     for (const auto& stop : stops)
         coordinates.push_back({ stop.first, stop.second->GetCoordinate() });
-
+    Interpolation(coordinates);
     if (!coordinates.size()) return;
     if (coordinates.size() == 1) {
         stops_coodinates[coordinates.front().name].longitude = properties.padding;
