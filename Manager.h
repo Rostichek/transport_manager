@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <ctime>
 #include <iomanip>
+#include <unordered_set>
 #include <exception>
 #include <iostream>
 #include <iterator>
@@ -19,6 +20,7 @@
 #include <type_traits>
 #include <map>
 #include <iomanip>
+#include <list>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
@@ -96,13 +98,23 @@ namespace Map {
 
         unordered_map<string_view, Coordinate> stops_coodinates;
 
+        struct StopPosition {
+            string_view name;
+            Coordinate coordinate;
+            struct Indexes {
+                size_t longitude = 0;
+                size_t latitude = 0;
+            }idx;
+        };
+
         void ComputeStopsCoordinates();
         void AddRounds();
         void AddStops();
         void AddNames();
         void AddBusNames();
+        bool IsNearby(const vector<StopPosition>& coordinates, const list<size_t>& idx_range) const;
+        vector<list<size_t>> Paginator(vector<StopPosition> coordinates) const;
 
-        
     };
 }
 

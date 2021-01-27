@@ -327,7 +327,7 @@ void Map::Map::AddBusNames() {
     }
 }
 
-void Map::Map:: AddStops() {
+void Map::Map::AddStops() {
     const auto& stops = manager.GetStops();
     set<string_view> stop_names;
     for (const auto& stop : stops)
@@ -378,45 +378,90 @@ void Map::Map::AddNames() {
     }
 }
 
+template<typename T>
+bool FindNearby(const vector<T>& container, const T& first, const T& second) {
+    for (size_t i = 1; i < container.size(); ++i) {
+        if (set<string>({ first, second }) == set<string>({ container[i], container[i - 1] }))
+            return true;
+    }
+    return false;
+}
+
+bool Map::Map::IsNearby(const vector<StopPosition>& coordinates, const list<size_t>& idx_range) const {
+    const auto& buses = manager.GetBuses();
+    for (size_t cur : idx_range) {
+        for (size_t cmp : idx_range) {
+            if (cur == cmp) continue;
+            string current =  string(coordinates[cur].name);
+            string compare = string(coordinates[cmp].name);
+            for (const auto& [bus_name, bus] : buses) {
+                if (bus->Find(current) && bus->Find(compare)) {
+                    const auto& route = bus->GetStops();
+                    if (FindNearby(route, current, compare)) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const {
+    vector<list<size_t>> paginated_ranges;
+    size_t idx = 0;
+    list<size_t> idx_range(1, 0);
+    for (size_t i = 1; i < coordinates.size(); i++) {
+        idx_range.push_back(i);
+        if (IsNearby(coordinates, idx_range)) {
+            idx_range.pop_back();
+            paginated_ranges.push_back(idx_range);
+            idx_range.clear();
+            idx_range.push_back(i);
+            idx++;
+        }
+    }
+    if(idx_range.size())
+        paginated_ranges.push_back(idx_range);
+    return paginated_ranges;
+}
+
+#define COMPRESS_COORDINATES(axis) {                                                                            \
+    sort(coordinates.begin(), coordinates.end(), [](const StopPosition& lhs, const StopPosition& rhs) {         \
+        return lhs.coordinate.axis < rhs.coordinate.axis;                                                       \
+    });                                                                                                         \
+    __ranges__ = Paginator(coordinates);                                                                        \
+    for (size_t idx = 0; idx < __ranges__.size(); idx++)                                                        \
+        for (size_t position : __ranges__[idx])                                                                 \
+            coordinates[position].idx.axis = idx;                                                               \
+}
+
 void Map::Map::ComputeStopsCoordinates() {
     const auto& stops = manager.GetStops();
-    struct StopPosition {
-        string_view name;
-        Coordinate coordinate;
-        struct Indexes {
-            size_t longitude = 0;
-            size_t latitude = 0;
-        }idx;
-    };
     vector<StopPosition> coordinates;
     coordinates.reserve(stops.size());
-    size_t i = 0;
-    for (const auto& stop : stops) {
+    for (const auto& stop : stops)
         coordinates.push_back({ stop.first, stop.second->GetCoordinate() });
-        i++;
-    }
+
     if (!coordinates.size()) return;
     if (coordinates.size() == 1) {
         stops_coodinates[coordinates.front().name].longitude = properties.padding;
         stops_coodinates[coordinates.front().name].latitude = properties.height - properties.padding;
         return;
     }
-    const double x_step = (properties.width - 2 * properties.padding) / (coordinates.size() - 1);
-    const double y_step = (properties.height - 2 * properties.padding) / (coordinates.size() - 1);
 
-    sort(coordinates.begin(), coordinates.end(), [](const StopPosition& lhs, const StopPosition& rhs) {
-        return lhs.coordinate.longitude < rhs.coordinate.longitude;
-        });
-    size_t idx = 0;
+    vector<list<size_t>> __ranges__;
+    COMPRESS_COORDINATES(longitude);
+    double x_step = 0;
+    if (__ranges__.size() == 1) x_step = 0;
+    else x_step = (properties.width - 2 * properties.padding) / (__ranges__.size() - 1);
     for (auto& coordinate : coordinates)
-        coordinate.coordinate.longitude = properties.padding + x_step * (coordinate.idx.longitude = idx++);
+        coordinate.coordinate.longitude = properties.padding + x_step * coordinate.idx.longitude;
 
-    sort(coordinates.begin(), coordinates.end(), [](const StopPosition& lhs, const StopPosition& rhs) {
-        return lhs.coordinate.latitude < rhs.coordinate.latitude;
-        });
-    idx = 0;
+    COMPRESS_COORDINATES(latitude);
+    double y_step = 0;
+    if (__ranges__.size() == 1) x_step = 0;
+    else y_step = (properties.height - 2 * properties.padding) / (__ranges__.size() - 1);
     for (auto& coordinate : coordinates)
-        coordinate.coordinate.latitude = properties.height - properties.padding - y_step * (coordinate.idx.longitude = idx++);
+        coordinate.coordinate.latitude = properties.height - properties.padding - y_step * coordinate.idx.latitude;
 
     for (const auto& coordinate : coordinates)
         stops_coodinates[coordinate.name] = coordinate.coordinate;
