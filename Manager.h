@@ -113,7 +113,7 @@ namespace Map {
         void AddStops();
         void AddNames();
         void AddBusNames();
-        bool IsNearby(const vector<StopPosition>& coordinates, const list<size_t>& idx_range) const;
+        optional<size_t> IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& idx_range) const;
         vector<list<size_t>> Paginator(vector<StopPosition> coordinates) const;
         void FindBaseStops(vector<StopPosition>& coordinates) const;
         void Interpolation(vector<StopPosition>& coordinates) const;

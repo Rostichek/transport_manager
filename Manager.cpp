@@ -387,41 +387,42 @@ bool FindNearby(const vector<T>& container, const T& first, const T& second) {
     return false;
 }
 
-bool Map::Map::IsNearby(const vector<StopPosition>& coordinates, const list<size_t>& idx_range) const {
+optional<size_t> Map::Map::IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& idx_range) const {
     const auto& buses = manager.GetBuses();
-    for (size_t cur : idx_range) {
-        for (size_t cmp : idx_range) {
-            if (cur == cmp) continue;
-            string current =  string(coordinates[cur].name);
-            string compare = string(coordinates[cmp].name);
-            for (const auto& [bus_name, bus] : buses) {
-                if (bus->Find(current) && bus->Find(compare)) {
-                    const auto& route = bus->GetStops();
-                    if (FindNearby(route, current, compare)) return true;
+    optional<size_t> max_idx;
+    string stop_name = string(coordinates[idx_range.size()-1].name);
+    for (size_t i = 0; i < idx_range.size() - 1; ++i) {
+        string cmp = string(coordinates[i].name);
+        for (const auto& [bus_name, bus] : manager.GetBuses()) {
+            if (bus->Find(cmp)
+                && bus->Find(stop_name)) {
+                if (FindNearby(bus->GetStops(), stop_name, cmp)) {
+                    if (max_idx.has_value()) {
+                        max_idx = max(max_idx.value(), idx_range[i]);
+                    }
+                    else max_idx = idx_range[i];
                 }
             }
         }
     }
-    return false;
+    return max_idx;
 }
 
 vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const {
-    vector<list<size_t>> paginated_ranges;
-    size_t idx = 0;
-    list<size_t> idx_range(1, 0);
-    for (size_t i = 1; i < coordinates.size(); i++) {
-        idx_range.push_back(i);
-        if (IsNearby(coordinates, idx_range)) {
-            idx_range.pop_back();
-            paginated_ranges.push_back(idx_range);
-            idx_range.clear();
-            idx_range.push_back(i);
-            idx++;
-        }
+    vector<size_t> indexes(coordinates.size());
+    indexes.front() = 0;
+    for (size_t i = 1; i < coordinates.size(); ++i) {
+        auto is_nearby = IsNearby(coordinates, 
+            vector<size_t>(indexes.begin(), indexes.begin() + i + 1));
+        if (is_nearby.has_value())
+            indexes[i] = is_nearby.value() + 1;
+        else indexes[i] = 0;
     }
-    if(idx_range.size())
-        paginated_ranges.push_back(idx_range);
-    return paginated_ranges;
+    vector<list<size_t>> paginated_ranges(indexes.size());
+    for (size_t i = 0; i < indexes.size(); ++i)
+        paginated_ranges[indexes[i]].push_back(i);
+    return vector<list<size_t>>(paginated_ranges.begin(), 
+        find(paginated_ranges.begin(), paginated_ranges.end(), list<size_t>{}));
 }
 
 #define COMPRESS_COORDINATES(axis) {                                                                            \
