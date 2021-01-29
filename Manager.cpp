@@ -388,7 +388,7 @@ void Map::Map::ComputeNearbyStops() {
     }
 }
 
-bool Map::Map::FindNearby(const string& first, const string& second) const {
+bool Map::Map::FindNearby(string_view first, string_view second) const {
     if (nearby_stops.count(first)) {
         return (nearby_stops.count(first) && nearby_stops.at(first).count(second)) || 
             (nearby_stops.count(second) && nearby_stops.at(second).count(first));
@@ -399,9 +399,9 @@ bool Map::Map::FindNearby(const string& first, const string& second) const {
 optional<size_t> Map::Map::IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& indeces, size_t coordinate_num) const {
     const auto& buses = manager.GetBuses();
     optional<size_t> max_idx;
-    string stop_name = string(coordinates[coordinate_num].name);
+    string_view stop_name = coordinates[coordinate_num].name;
     for (size_t i = 0; i < coordinate_num; ++i) {
-        string cmp = string(coordinates[i].name);
+        string_view cmp = coordinates[i].name;
         for (const auto& [bus_name, bus] : manager.GetBuses()) {
             if (bus->Find(cmp)
                 && bus->Find(stop_name)) {
@@ -447,7 +447,7 @@ vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const
 void Map::Map::FindBaseStops(vector<StopPosition>& coordinates) const {
     for (auto& coordinate : coordinates) {
         size_t buses_counter = 0;
-        string stop_name = string(coordinate.name);
+        string_view stop_name = coordinate.name;
         for (const auto& [bus_name, bus] : manager.GetBuses()) {
             if (bus->Find(stop_name)) {
                 size_t counter = 0;
@@ -467,9 +467,9 @@ void Map::Map::FindBaseStops(vector<StopPosition>& coordinates) const {
 
 void Map::Map::Interpolation(vector<StopPosition>& coordinates) const {
     FindBaseStops(coordinates);
-    unordered_map<string, StopPosition*> coordinates_map;
+    unordered_map<string_view, StopPosition*> coordinates_map;
     for (auto& coordinate : coordinates)
-        coordinates_map[string(coordinate.name)] = &coordinate;
+        coordinates_map[coordinate.name] = &coordinate;
 
     for (const auto& [bus_name, bus] : manager.GetBuses()) {
         auto& stops = bus->GetStops();

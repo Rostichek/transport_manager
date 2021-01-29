@@ -96,7 +96,7 @@ namespace Map {
         } properties;
 
         unordered_map<string_view, Coordinate> stops_coodinates;
-        unordered_map<string, unordered_set<string>> nearby_stops;
+        unordered_map<string_view, unordered_set<string_view>> nearby_stops;
 
         struct StopPosition {
             string_view name;
@@ -111,7 +111,7 @@ namespace Map {
         void ComputeStopsCoordinates();
         void ComputeNearbyStops();
 
-        bool FindNearby(const string& first, const string& second) const;
+        bool FindNearby(string_view first, string_view second) const;
 
         void AddRounds();
         void AddStops();
@@ -240,7 +240,7 @@ public:
         return length;
     }
 
-    bool Find(const string& stop_name) const {
+    bool Find(string_view stop_name) const {
         return (find(stops_.begin(), stops_.end(), stop_name) != stops_.end());
     }
 
