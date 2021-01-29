@@ -378,29 +378,38 @@ void Map::Map::AddNames() {
     }
 }
 
-template<typename T>
-bool FindNearby(const vector<T>& container, const T& first, const T& second) {
-    for (size_t i = 1; i < container.size(); ++i) {
-        if (set<string>({ first, second }) == set<string>({ container[i], container[i - 1] }))
-            return true;
+void Map::Map::ComputeNearbyStops() {
+    for (const auto& [bus_name, bus] : manager.GetBuses()) {
+        const auto& stops = bus->GetStops();
+        for (size_t i = 1; i < stops.size(); ++i) {
+            nearby_stops[stops[i]].insert(stops[i - 1]);
+            nearby_stops[stops[i - 1]].insert(stops[i]);
+        }
+    }
+}
+
+bool Map::Map::FindNearby(const string& first, const string& second) const {
+    if (nearby_stops.count(first)) {
+        return (nearby_stops.count(first) && nearby_stops.at(first).count(second)) || 
+            (nearby_stops.count(second) && nearby_stops.at(second).count(first));
     }
     return false;
 }
 
-optional<size_t> Map::Map::IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& idx_range) const {
+optional<size_t> Map::Map::IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& indeces, size_t coordinate_num) const {
     const auto& buses = manager.GetBuses();
     optional<size_t> max_idx;
-    string stop_name = string(coordinates[idx_range.size()-1].name);
-    for (size_t i = 0; i < idx_range.size() - 1; ++i) {
+    string stop_name = string(coordinates[coordinate_num].name);
+    for (size_t i = 0; i < coordinate_num; ++i) {
         string cmp = string(coordinates[i].name);
         for (const auto& [bus_name, bus] : manager.GetBuses()) {
             if (bus->Find(cmp)
                 && bus->Find(stop_name)) {
-                if (FindNearby(bus->GetStops(), stop_name, cmp)) {
+                if (FindNearby(stop_name, cmp)) {
                     if (max_idx.has_value()) {
-                        max_idx = max(max_idx.value(), idx_range[i]);
+                        max_idx = max(max_idx.value(), indeces[i]);
                     }
-                    else max_idx = idx_range[i];
+                    else max_idx = indeces[i];
                 }
             }
         }
@@ -409,18 +418,18 @@ optional<size_t> Map::Map::IsNearby(const vector<StopPosition>& coordinates, con
 }
 
 vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const {
-    vector<size_t> indexes(coordinates.size());
-    indexes.front() = 0;
+    vector<size_t> indeces(coordinates.size());
+    indeces.front() = 0;
     for (size_t i = 1; i < coordinates.size(); ++i) {
         auto is_nearby = IsNearby(coordinates, 
-            vector<size_t>(indexes.begin(), indexes.begin() + i + 1));
+            indeces, i);
         if (is_nearby.has_value())
-            indexes[i] = is_nearby.value() + 1;
-        else indexes[i] = 0;
+            indeces[i] = is_nearby.value() + 1;
+        else indeces[i] = 0;
     }
-    vector<list<size_t>> paginated_ranges(indexes.size());
-    for (size_t i = 0; i < indexes.size(); ++i)
-        paginated_ranges[indexes[i]].push_back(i);
+    vector<list<size_t>> paginated_ranges(indeces.size());
+    for (size_t i = 0; i < indeces.size(); ++i)
+        paginated_ranges[indeces[i]].push_back(i);
     return vector<list<size_t>>(paginated_ranges.begin(), 
         find(paginated_ranges.begin(), paginated_ranges.end(), list<size_t>{}));
 }
@@ -483,6 +492,7 @@ void Map::Map::Interpolation(vector<StopPosition>& coordinates) const {
 }
 
 void Map::Map::ComputeStopsCoordinates() {
+    ComputeNearbyStops();
     const auto& stops = manager.GetStops();
     vector<StopPosition> coordinates;
     coordinates.reserve(stops.size());

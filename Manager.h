@@ -21,7 +21,6 @@
 #include <map>
 #include <iomanip>
 #include <list>
-#include <unordered_map>
 #include <vector>
 #include <algorithm>
 #include "graph.h"
@@ -97,6 +96,7 @@ namespace Map {
         } properties;
 
         unordered_map<string_view, Coordinate> stops_coodinates;
+        unordered_map<string, unordered_set<string>> nearby_stops;
 
         struct StopPosition {
             string_view name;
@@ -109,11 +109,15 @@ namespace Map {
         };
 
         void ComputeStopsCoordinates();
+        void ComputeNearbyStops();
+
+        bool FindNearby(const string& first, const string& second) const;
+
         void AddRounds();
         void AddStops();
         void AddNames();
         void AddBusNames();
-        optional<size_t> IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& idx_range) const;
+        optional<size_t> IsNearby(const vector<StopPosition>& coordinates, const vector<size_t>& idx_range, size_t coodinate_num) const;
         vector<list<size_t>> Paginator(vector<StopPosition> coordinates) const;
         void FindBaseStops(vector<StopPosition>& coordinates) const;
         void Interpolation(vector<StopPosition>& coordinates) const;
