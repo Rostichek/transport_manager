@@ -32,6 +32,7 @@ namespace Graph {
             std::string text;
             size_t stop_count = 0;
             Weight weight;
+            std::vector<std::pair<std::string_view, std::string_view>> stops_list;
         };
 
     template <typename Weight>

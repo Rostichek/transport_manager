@@ -37,7 +37,8 @@ void TransportManager::AddStop(string stop_name, Coordinate coordinate) {
     stops_[stop_name] = make_unique<Stop>(stop_name, coordinate, stops_coutner);
     if (stops_coutner == 0) {
         min_coordinate = max_coordinate = coordinate;
-    } else {
+    }
+    else {
         min_coordinate.latitude = min(min_coordinate.latitude, coordinate.latitude);
         min_coordinate.longitude = min(min_coordinate.longitude, coordinate.longitude);
         max_coordinate.latitude = max(max_coordinate.latitude, coordinate.latitude);
@@ -74,6 +75,12 @@ const Stop* TransportManager::GetStop(const string& stop_name) const {
     return nullptr;
 }
 
+bool Bus::IsEnding(string_view stop) const {
+    if (stop == stops_.front() || (is_reversed_ && stop == stops_.back())) return true;
+    return false;
+}
+
+
 int Bus::GetLength(const TransportManager& manager) const {
     int length = 0;
     for (size_t i = 0; i < stops_.size() - 1; ++i) {
@@ -82,7 +89,7 @@ int Bus::GetLength(const TransportManager& manager) const {
             distance_between_stops = manager.GetStop(stops_[i])->GetDistance(stops_[i + 1]);
         }
         catch (...) {
-            distance_between_stops = manager.GetStop(stops_[i+1])->GetDistance(stops_[i]);
+            distance_between_stops = manager.GetStop(stops_[i + 1])->GetDistance(stops_[i]);
         }
         length += distance_between_stops;
     }
@@ -120,6 +127,7 @@ void TransportManager::BuildRouter() {
         const auto& stops = bus.second->GetStops();
         for (size_t j = 0; j < stops.size() - 1; ++j) {
             double distance = 0.0;
+            edge.stops_list.clear();
             edge.stop_count = 0;
             for (size_t i = j; i < stops.size() - 1; ++i) {
                 int distance_between_stops = 0;
@@ -129,6 +137,7 @@ void TransportManager::BuildRouter() {
                 catch (...) {
                     distance_between_stops = GetStop(stops[i + 1])->GetDistance(stops[i]);
                 }
+                edge.stops_list.push_back({ stops[i] , stops[i + 1] });
                 distance += distance_between_stops;
                 edge.stop_count++;
                 edge.from = GetStop(stops[j])->GetIndx().second;
@@ -141,6 +150,7 @@ void TransportManager::BuildRouter() {
             for (size_t j = stops.size() - 1; j > 0; --j) {
                 double distance = 0.0;
                 edge.stop_count = 0;
+                edge.stops_list.clear();
                 for (size_t i = j; i > 0; --i) {
                     int distance_between_stops = 0;
                     try {
@@ -149,6 +159,7 @@ void TransportManager::BuildRouter() {
                     catch (...) {
                         distance_between_stops = GetStop(stops[i - 1])->GetDistance(stops[i]);
                     }
+                    edge.stops_list.push_back({ stops[i] , stops[i - 1] });
                     distance += distance_between_stops;
                     edge.weight = (distance / (bus_velocity_ * 1000.0)) * 60;
                     edge.stop_count++;
@@ -162,7 +173,7 @@ void TransportManager::BuildRouter() {
     router = make_unique<Graph::Router<double>>(graph);
 }
 
-vector<Graph::Edge<double>> TransportManager::GetRoute(const string& from, const string& to) const {
+pair<string, vector<Graph::Edge<double>>> TransportManager::GetRoute(const string& from, const string& to) const {
     vector<Graph::Edge<double>> items;
     const auto& info = router->BuildRoute(stops_.at(from)->GetIndx().first, stops_.at(to)->GetIndx().first);
     if (!info.has_value())
@@ -170,7 +181,7 @@ vector<Graph::Edge<double>> TransportManager::GetRoute(const string& from, const
     for (int i = 0; i < info->edge_count; ++i)
         items.push_back(graph_->GetEdge(router->GetRouteEdge(info->id, i)));
     //router->ReleaseRoute(info->id);
-    return items;
+    return { reoute_renderer->RenderRoute(items), items };
 }
 
 
@@ -189,7 +200,7 @@ Svg::Color ReadColor(const Json::Node& json_color) {
     catch (...) {
         return Svg::Color(json_color.AsString());
     }
-   
+
 }
 
 Map::Map::Map(const std::map<std::string, Json::Node>& json_properties, const TransportManager& manager) : manager(manager) {
@@ -200,6 +211,7 @@ Map::Map::Map(const std::map<std::string, Json::Node>& json_properties, const Tr
     properties.line_width = json_properties.at("line_width").AsNumber();
     properties.stop_label_font_size = json_properties.at("stop_label_font_size").AsNumber();
     properties.bus_label_font_size = json_properties.at("bus_label_font_size").AsNumber();
+    properties.outer_margin = json_properties.at("outer_margin").AsNumber();
     properties.stop_label_offset = {
         json_properties.at("stop_label_offset").AsArray().front().AsNumber(),
         json_properties.at("stop_label_offset").AsArray().back().AsNumber()
@@ -223,6 +235,8 @@ Map::Map::Map(const std::map<std::string, Json::Node>& json_properties, const Tr
     ComputeStopsCoordinates();
 }
 
+const unordered_map<string, unique_ptr<Bus>>& Map::Map::GetBuses() const { return manager.GetBuses(); }
+
 void Map::Map::AddRounds() {
     const auto& buses = manager.GetBuses();
     set<string_view> bus_names;
@@ -233,6 +247,7 @@ void Map::Map::AddRounds() {
         const auto* bus = manager.GetBus(string(bus_name));
         const auto& stops = bus->GetStops();
         Svg::Polyline round;
+        bus_colors[bus_name] = bus_num;
         round.SetStrokeColor(properties.color_palette.at(bus_num % (properties.color_palette.size())))
             .SetStrokeWidth(properties.line_width)
             .SetStrokeLineCap("round")
@@ -338,7 +353,7 @@ void Map::Map::AddStops() {
             .SetCenter({
                     stop_coord.longitude,
                     stop_coord.latitude
-            })
+                })
             .SetRadius(properties.stop_radius)
             .SetFillColor("white"));
     }
@@ -390,7 +405,7 @@ void Map::Map::ComputeNearbyStops() {
 
 bool Map::Map::FindNearby(string_view first, string_view second) const {
     if (nearby_stops.count(first)) {
-        return (nearby_stops.count(first) && nearby_stops.at(first).count(second)) || 
+        return (nearby_stops.count(first) && nearby_stops.at(first).count(second)) ||
             (nearby_stops.count(second) && nearby_stops.at(second).count(first));
     }
     return false;
@@ -421,7 +436,7 @@ vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const
     vector<size_t> indeces(coordinates.size());
     indeces.front() = 0;
     for (size_t i = 1; i < coordinates.size(); ++i) {
-        auto is_nearby = IsNearby(coordinates, 
+        auto is_nearby = IsNearby(coordinates,
             indeces, i);
         if (is_nearby.has_value())
             indeces[i] = is_nearby.value() + 1;
@@ -430,7 +445,7 @@ vector<list<size_t>> Map::Map::Paginator(vector<StopPosition> coordinates) const
     vector<list<size_t>> paginated_ranges(indeces.size());
     for (size_t i = 0; i < indeces.size(); ++i)
         paginated_ranges[indeces[i]].push_back(i);
-    return vector<list<size_t>>(paginated_ranges.begin(), 
+    return vector<list<size_t>>(paginated_ranges.begin(),
         find(paginated_ranges.begin(), paginated_ranges.end(), list<size_t>{}));
 }
 
@@ -526,6 +541,7 @@ void Map::Map::ComputeStopsCoordinates() {
 }
 
 void Map::Map::RenderMap() {
+    if (is_rendered) return;
     for (auto layer : properties.layers) {
         switch (layer) {
         case LayerType::BUS_LABELS: {
@@ -552,4 +568,196 @@ void Map::Map::RenderMap() {
     stringstream result;
     result << quoted(out.str());
     map = result.str();
+    is_rendered = true;
+}
+
+namespace Map {
+    RouteRenderer::RouteRenderer(shared_ptr<Map> map) : map(map) {
+        map->RenderMap();
+        const auto& properties = map->GetProperties();
+        base_svg = map->GetSvgMap();
+        base_svg.Add(Svg::Rectangle{}
+            .SetFirstPoint({
+                -properties.outer_margin,
+                -properties.outer_margin
+                })
+            .SetSecondPoint({
+                properties.width + properties.outer_margin,
+                properties.height + properties.outer_margin
+                })
+            .SetFillColor(properties.underlayer_color)
+        );
+        base_size = base_svg.Size();
+    }
+
+    string RouteRenderer::RenderRoute(const vector<Graph::Edge<double>>& items) {
+        for (auto layer : map->GetProperties().layers) {
+            switch (layer) {
+            case LayerType::BUS_LABELS: {
+                AddBusNames(items);
+                break;
+            }
+            case LayerType::BUS_LINES: {
+                AddRounds(items);
+                break;
+            }
+            case LayerType::STOP_LABELS: {
+                AddNames(items);
+                break;
+            }
+            case LayerType::STOP_POINTS: {
+                AddStops(items);
+                break;
+            }
+            default: break;
+            }
+        }
+        stringstream out;
+        base_svg.Render(out);
+        base_svg.Remove(base_size);
+        stringstream result;
+        result << quoted(out.str());
+        return result.str();
+    }
+
+    void RouteRenderer::AddRounds(const vector<Graph::Edge<double>>& items) {
+        const auto& properties = map->GetProperties();
+        const auto& bus_colors = map->GetColors();
+        const auto& stops_coordinates = map->GetCoordinates();
+        for (const auto& item : items) {
+            if (item.type == "Wait") continue;
+            Svg::Polyline round;
+            round.SetStrokeColor(properties.color_palette.at(bus_colors.at(item.text) % (properties.color_palette.size())))
+                .SetStrokeWidth(properties.line_width)
+                .SetStrokeLineCap("round")
+                .SetStrokeLineJoin("round");
+            for (const auto& line : item.stops_list) {
+                const auto& stop_coord = stops_coordinates.at(line.first);
+                round.AddPoint({
+                        stop_coord.longitude,
+                        stop_coord.latitude
+                    });
+            }
+            const auto& stop_coord = stops_coordinates.at(item.stops_list.back().second);
+            round.AddPoint({
+                        stop_coord.longitude,
+                        stop_coord.latitude
+                });
+            base_svg.Add(round);
+        }
+    }
+
+    void RouteRenderer::AddBusNames(const vector<Graph::Edge<double>>& items) {
+        const auto& properties = map->GetProperties();
+        const auto& bus_colors = map->GetColors();
+        const auto& stops_coordinates = map->GetCoordinates();
+        for (const auto& item : items) {
+            if (item.type == "Wait") continue;
+            const auto& buses = map->GetBuses();
+            vector<Coordinate> ending_stops;
+            if (buses.at(item.text)->IsEnding(item.stops_list.front().first)) 
+                ending_stops.push_back(stops_coordinates.at(item.stops_list.front().first));
+            if (buses.at(item.text)->IsEnding(item.stops_list.back().second))
+                ending_stops.push_back(stops_coordinates.at(item.stops_list.back().second));
+            for (const auto& stop_coord : ending_stops) {
+                base_svg.Add(Svg::Text{}
+                    .SetPoint({
+                            stop_coord.longitude,
+                            stop_coord.latitude
+                        })
+                    .SetOffset(properties.bus_label_offset)
+                    .SetFontSize(properties.bus_label_font_size)
+                    .SetFontFamily("Verdana")
+                    .SetData(item.text)
+                    .SetFillColor(properties.underlayer_color)
+                    .SetStrokeColor(properties.underlayer_color)
+                    .SetStrokeWidth(properties.underlayer_width)
+                    .SetStrokeLineCap("round")
+                    .SetFontWeight("bold")
+                    .SetStrokeLineJoin("round"));
+                base_svg.Add(Svg::Text{}
+                    .SetPoint({
+                            stop_coord.longitude,
+                            stop_coord.latitude
+                        })
+                    .SetOffset(properties.bus_label_offset)
+                    .SetFontSize(properties.bus_label_font_size)
+                    .SetFontFamily("Verdana")
+                    .SetFontWeight("bold")
+                    .SetData(item.text)
+                    .SetFillColor(properties.color_palette.at(bus_colors.at(item.text) % (properties.color_palette.size()))));
+            }
+        }
+    }
+
+    void RouteRenderer::AddStops(const vector<Graph::Edge<double>>& items) {
+        const auto& properties = map->GetProperties();
+        const auto& bus_colors = map->GetColors();
+        const auto& stops_coordinates = map->GetCoordinates();
+        for (const auto& item : items) {
+            if (item.type == "Wait") continue;
+            for (const auto& line : item.stops_list) {
+                const auto& stop_coord = stops_coordinates.at(line.first);
+                base_svg.Add(Svg::Circle{}
+                    .SetCenter({
+                            stop_coord.longitude,
+                            stop_coord.latitude
+                        })
+                    .SetRadius(properties.stop_radius)
+                    .SetFillColor("white"));
+            }
+            const auto& stop_coord = stops_coordinates.at(item.stops_list.back().second);
+            base_svg.Add(Svg::Circle{}
+                .SetCenter({
+                        stop_coord.longitude,
+                        stop_coord.latitude
+                    })
+                .SetRadius(properties.stop_radius)
+                .SetFillColor("white"));
+        }
+    }
+
+    void RouteRenderer::AddNames(const vector<Graph::Edge<double>>& items) {
+        size_t counter = 0;
+        const auto& stops_coordinates = map->GetCoordinates();
+        const auto& properties = map->GetProperties();
+        for (const auto& item : items) {
+            counter++;
+            Coordinate stop_coord;
+            string stop_name;
+            if (item.type == "Wait") {
+                stop_name = item.text;
+                stop_coord = stops_coordinates.at(item.text);
+            }
+            else if (counter == items.size()) {
+                stop_name = item.stops_list.back().second;
+                stop_coord = stops_coordinates.at(item.stops_list.back().second);
+            }
+            else continue;
+            base_svg.Add(Svg::Text{}
+                .SetPoint({
+                        stop_coord.longitude,
+                        stop_coord.latitude
+                    })
+                .SetOffset(properties.stop_label_offset)
+                .SetFontSize(properties.stop_label_font_size)
+                .SetFontFamily("Verdana")
+                .SetData(stop_name)
+                .SetFillColor(properties.underlayer_color)
+                .SetStrokeColor(properties.underlayer_color)
+                .SetStrokeWidth(properties.underlayer_width)
+                .SetStrokeLineCap("round")
+                .SetStrokeLineJoin("round"));
+            base_svg.Add(Svg::Text{}
+                .SetPoint({
+                        stop_coord.longitude,
+                        stop_coord.latitude
+                    })
+                .SetOffset(properties.stop_label_offset)
+                .SetFontSize(properties.stop_label_font_size)
+                .SetFontFamily("Verdana")
+                .SetData(stop_name)
+                .SetFillColor("black"));
+        }
+    }
 }

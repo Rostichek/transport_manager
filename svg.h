@@ -60,6 +60,7 @@ namespace Svg {
 		CIRCLE,
 		TEXT,
 		POLYLINE,
+		RECTANGLE
 	};
 
 	template<typename D>
@@ -138,6 +139,29 @@ namespace Svg {
 		double radius_ = 1.0;
 	};
 
+	class Rectangle : public Object<Rectangle> {
+	public:
+		Rectangle() : Object<Rectangle>(Type::RECTANGLE) {}
+
+		Rectangle& SetFirstPoint(Point first) {
+			first_ = first;
+			return *this;
+		}
+
+		Rectangle& SetSecondPoint(Point second) {
+			second_ = {
+				second.x - first_.x,
+				second.y - first_.y
+			};
+			return *this;
+		}
+
+		string PrintRectangleProperties() const;
+
+	private:
+		Point first_ = { 0,0 }, second_ = { 0,0 };
+	};
+
 	class Polyline : public Object<Polyline> {
 	public:
 		Polyline() : Object<Polyline>(Type::POLYLINE) {}
@@ -197,27 +221,47 @@ namespace Svg {
 	};
 
 	struct ObjectHolder {
+		ObjectHolder& operator= (const ObjectHolder& other) {
+			type = other.type;
+			object = other.object;
+			return *this;
+		}
+
 		Type type;
-		unique_ptr<variant<Circle, Polyline, Text>> object;
+		shared_ptr<variant<Circle, Polyline, Text, Rectangle>> object;
 	};
 
 	class Document {
 	public:
+		Document& operator=(const Document& other) {
+			objects_pool = other.objects_pool;
+			return *this;
+		}
+
 		Document() = default;
 
 		void Add(const Circle& object) {
-			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text>>(object) });
+			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text, Rectangle>>(object) });
 		}
 
 		void Add(const Text& object) {
-			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text>>(object) });
+			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text, Rectangle>>(object) });
 		}
 
 		void Add(const Polyline& object) {
-			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text>>(object) });
+			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text, Rectangle>>(object) });
+		}
+
+		void Add(const Rectangle& object) {
+			objects_pool.push_back({ object.type, make_unique<variant<Circle, Polyline, Text, Rectangle>>(object) });
 		}
 
 		void Render(std::ostream& out) const;
+
+		void Remove(size_t position);
+
+		size_t Size() const { return objects_pool.size(); }
+
 	private:
 		vector<ObjectHolder> objects_pool;
 	};

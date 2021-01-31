@@ -127,6 +127,7 @@ struct RouteResponse : public Response {
         size_t span_count;
     };
     vector<Item> items;
+    string svg;
     double total_time;
 };
 
@@ -262,8 +263,8 @@ struct RouteInfoRequest : ReadRequest<unique_ptr<RouteResponse>> {
         unique_ptr<RouteResponse> response = make_unique<RouteResponse>();
         auto route_info_items = manager.GetRoute(from, to);
         response->total_time = 0;
-        if (route_info_items.empty() && (from != to)) response->error_message = "not found";
-        for (const auto& item : route_info_items) {
+        if (route_info_items.second.empty() && (from != to)) response->error_message = "not found";
+        for (const auto& item : route_info_items.second) {
             response->total_time += item.weight;
             response->items.push_back({
                     item.type,
@@ -272,6 +273,7 @@ struct RouteInfoRequest : ReadRequest<unique_ptr<RouteResponse>> {
                     item.stop_count,
                 });
         }
+        response->svg = route_info_items.first;
         response->respones_id = request_id;
         return move(response);
     }
@@ -457,7 +459,8 @@ void PrintResponses(const vector<ResponseHolder> & responses, ostream & stream =
                 if (items_counter != response.items.size()) stream << ",";
                 stream << endl;
             }
-            stream << "\t\t]" << endl;
+            stream << "\t\t]," << endl;
+            stream << "\t\t\"map\": " /*<< "\""*/ << response.svg/* << "\""*/ << endl;
         }
         else if (response_holder->type == Request::Type::MAP) {
             const auto& response = static_cast<const MapResponse&>(*response_holder);

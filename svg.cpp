@@ -24,6 +24,15 @@ namespace Svg {
 		return out.str();
 	}
 
+	string Rectangle::PrintRectangleProperties() const {
+		stringstream out;
+		out << ComposeProperty("x", first_.x)
+			<< ComposeProperty("y", first_.y)
+			<< ComposeProperty("width", second_.x)
+			<< ComposeProperty("height", second_.y);
+		return out.str();
+	}
+
 	string Text::PrintTextProperties() const {
 		stringstream out;
 		out << ComposeProperty("x", coord_.x)
@@ -87,7 +96,14 @@ namespace Svg {
 		out << text.PrintTextProperties();
 		out << "</text>";
 		return out;
+	}
 
+	ostream& operator<<(ostream& out, const Rectangle& text) {
+		out << "<rect ";
+		out << text.PrintObjectProperties();
+		out << text.PrintRectangleProperties();
+		out << "/>";
+		return out;
 	}
 
 	void Document::Render(std::ostream& out) const {
@@ -107,6 +123,10 @@ namespace Svg {
 				out << get<Text>(*object.object);
 				break;
 			}
+			case Type::RECTANGLE: {
+				out << get<Rectangle>(*object.object);
+				break;
+			}
 			default: {
 				break;
 			}
@@ -114,4 +134,11 @@ namespace Svg {
 		}
 		out << " </svg>";
 	}
+
+	// Removes the elements_num of the last added elements from the document
+	void Document::Remove(size_t position) {
+		if (position > objects_pool.size()) return;
+		objects_pool.erase(objects_pool.begin() + position, objects_pool.end());
+	}
+
 }

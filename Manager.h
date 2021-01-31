@@ -50,6 +50,30 @@ struct Coordinate {
 };
 
 namespace Map {
+    enum class LayerType {
+        BUS_LINES,
+        BUS_LABELS,
+        STOP_POINTS,
+        STOP_LABELS
+    };
+
+    struct Properties {
+        double width;
+        double height;
+        double padding;
+        double stop_radius;
+        double line_width;
+        size_t stop_label_font_size;
+        Svg::Point stop_label_offset;
+        Svg::Color underlayer_color;
+        double underlayer_width;
+        vector<Svg::Color> color_palette;
+        size_t bus_label_font_size;
+        Svg::Point bus_label_offset;
+        vector<LayerType> layers;
+        double outer_margin;
+    };
+
     class Map {
     public:
         Map() = delete;
@@ -57,17 +81,20 @@ namespace Map {
 
         void RenderMap();
 
-        string GetMap() const {
-            return map;
-        }
+        const Properties& GetProperties() const { return properties; }
+
+        string GetMap() const { return map; }
+
+        const auto& GetCoordinates() const { return stops_coodinates; }
+
+        const auto& GetColors() const { return bus_colors; }
+
+        const Svg::Document& GetSvgMap() const { return svg; }
+
+        const unordered_map<string, unique_ptr<Bus>>& GetBuses() const;
 
     private:
-        enum class LayerType {
-            BUS_LINES,
-            BUS_LABELS,
-            STOP_POINTS,
-            STOP_LABELS
-        };
+        bool is_rendered = false;
 
         const unordered_map<string_view, LayerType> STR_TO_LAYER_TYPE = {
             {"bus_lines", LayerType::BUS_LINES},
@@ -79,24 +106,12 @@ namespace Map {
         const TransportManager& manager;
         Svg::Document svg;
         string map = "";
-        struct Properties {
-            double width;
-            double height;
-            double padding;
-            double stop_radius;
-            double line_width;
-            size_t stop_label_font_size;
-            Svg::Point stop_label_offset;
-            Svg::Color underlayer_color;
-            double underlayer_width;
-            vector<Svg::Color> color_palette;
-            size_t bus_label_font_size;
-            Svg::Point bus_label_offset;
-            vector<LayerType> layers;
-        } properties;
+
+        Properties properties;
 
         unordered_map<string_view, Coordinate> stops_coodinates;
         unordered_map<string_view, unordered_set<string_view>> nearby_stops;
+        unordered_map<string_view, size_t> bus_colors;
 
         struct StopPosition {
             string_view name;
@@ -125,11 +140,35 @@ namespace Map {
     };
 }
 
+namespace Map {
+    class RouteRenderer {
+    public:
+        RouteRenderer() = delete;
+
+        RouteRenderer(shared_ptr<Map> map);
+
+        void AddRounds(const vector<Graph::Edge<double>>& items);
+
+        void AddBusNames(const vector<Graph::Edge<double>>& items);
+
+        void AddStops(const vector<Graph::Edge<double>>& items);
+
+        void AddNames(const vector<Graph::Edge<double>>& items);
+
+
+        string RenderRoute(const vector<Graph::Edge<double>>& items);
+    private:
+        shared_ptr<Map> map;
+        Svg::Document base_svg;
+        size_t base_size = 0;
+    };
+}
+
 double ComputeDistance(const Coordinate& lhs, const Coordinate& rhs);
 
 class TransportManager {
 public:
-    TransportManager(size_t bus_wait_time, size_t bus_velocity) : 
+    TransportManager(size_t bus_wait_time, size_t bus_velocity) :
         bus_wait_time_(bus_wait_time),
         bus_velocity_(bus_velocity)
     {}
@@ -142,7 +181,7 @@ public:
 
     const Bus* GetBus(const string& bus_name) const;
 
-    vector<Graph::Edge<double>> GetRoute(const string& from, const string& to) const;
+    pair<string, vector<Graph::Edge<double>>> GetRoute(const string& from, const string& to) const;
 
     const unordered_map<string, unique_ptr<Bus>>& GetBuses() const;
 
@@ -153,8 +192,9 @@ public:
     void BuildRouter();
 
     void BuildMap(std::map<std::string, Json::Node> properties) {
-        map_ = make_unique<Map::Map>(properties, *this);
+        map_ = make_shared<Map::Map>(properties, *this);
         map_.get()->RenderMap();
+        reoute_renderer = make_unique<Map::RouteRenderer>(map_);
     }
 
     string GetMap() const {
@@ -187,7 +227,8 @@ private:
     unique_ptr<Graph::DirectedWeightedGraph<double>> graph_;
     unique_ptr<Graph::Router<double>> router;
 
-    unique_ptr<Map::Map> map_;
+    unique_ptr<Map::RouteRenderer> reoute_renderer;
+    shared_ptr<Map::Map> map_;
 };
 
 class Stop {
@@ -215,7 +256,7 @@ private:
     unordered_map<string, int> distances_;
 };
 
-class Bus{
+class Bus {
 public:
     Bus(const string& name, vector<string> stops, bool is_reversed) : name_(name), stops_(stops), is_reversed_(is_reversed) {}
 
@@ -228,6 +269,8 @@ public:
         set<string> unique_stops(stops_.begin(), stops_.end());
         return unique_stops.size();
     }
+
+    bool IsEnding(string_view stop) const;
 
     int GetLength(const TransportManager& manager) const;
 
